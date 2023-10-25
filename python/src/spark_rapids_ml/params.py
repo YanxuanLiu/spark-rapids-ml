@@ -30,7 +30,7 @@ from typing import (
 from pyspark.ml.param import Param, Params, TypeConverters
 from pyspark.sql import SparkSession
 
-from .utils import _is_local, get_logger
+from .utils import _get_spark_session, _is_local, get_logger
 
 if TYPE_CHECKING:
     from pyspark.ml._typing import ParamMap
@@ -167,11 +167,31 @@ class _CumlParams(_CumlClass, Params):
         Number of cuML workers, where each cuML worker corresponds to one Spark task
         running on one GPU.
         """
-        return (
-            self._infer_num_workers()
-            if self._num_workers is None
-            else self._num_workers
-        )
+
+        inferred_workers = self._infer_num_workers()
+        if self._num_workers is not None:
+            # user sets the num_workers explicitly
+            sc = _get_spark_session().sparkContext
+            if _is_local(sc):
+                default_parallelism = sc.defaultParallelism
+                if default_parallelism < self._num_workers:
+                    raise ValueError(
+                        f"The num_workers ({self._num_workers}) should be less than "
+                        f"or equal to spark default parallelism ({default_parallelism})"
+                    )
+                elif inferred_workers < self._num_workers:
+                    raise ValueError(
+                        f"The num_workers ({self._num_workers}) should be less than "
+                        f"or equal to total GPUs ({inferred_workers})"
+                    )
+            elif inferred_workers < self._num_workers:
+                get_logger(self.__class__).warning(
+                    f"Spark cluster may not have enough executors. "
+                    f"Found {inferred_workers} < {self._num_workers}"
+                )
+            return self._num_workers
+
+        return inferred_workers
 
     @num_workers.setter
     def num_workers(self, value: int) -> None:
@@ -199,7 +219,7 @@ class _CumlParams(_CumlClass, Params):
         instance._cuml_params = cuml_params
         return instance
 
-    def initialize_cuml_params(self) -> None:
+    def _initialize_cuml_params(self) -> None:
         """
         Set the default values of cuML parameters to match their Spark equivalents.
         """
@@ -213,7 +233,7 @@ class _CumlParams(_CumlClass, Params):
             if self.hasDefault(spark_param):
                 self._set_cuml_param(spark_param, self.getOrDefault(spark_param))
 
-    def set_params(self: P, **kwargs: Any) -> P:
+    def _set_params(self: P, **kwargs: Any) -> P:
         """
         Set the kwargs as Spark ML Params and/or cuML parameters, while maintaining parameter
         and value mappings defined by the _CumlClass.

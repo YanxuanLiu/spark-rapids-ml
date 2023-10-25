@@ -134,7 +134,7 @@ class SparkRapidsMLDummy(
         #
 
         super().__init__()
-        self.set_params(**kwargs)
+        self._set_params(**kwargs)
         self.m = m
         self.n = n
         self.partition_num = partition_num
@@ -151,16 +151,16 @@ class SparkRapidsMLDummy(
         return self._set(outputCols=value)
 
     def setAlpha(self, value: int) -> "SparkRapidsMLDummy":
-        return self.set_params(**{"alpha": value})
+        return self._set_params(**{"alpha": value})
 
     def setBeta(self, value: int) -> "SparkRapidsMLDummy":
         raise ValueError("Not supported")
 
     def setGamma(self, value: float) -> "SparkRapidsMLDummy":
-        return self.set_params(**{"gamma": value})
+        return self._set_params(**{"gamma": value})
 
     def setK(self, value: str) -> "SparkRapidsMLDummy":
-        return self.set_params(**{"k": value})
+        return self._set_params(**{"k": value})
 
     def _get_cuml_fit_func(
         self,
@@ -232,7 +232,7 @@ class SparkRapidsMLDummy(
         assert result.n_cols == self.n
         assert result.model_attribute_a == 1024
         assert result.model_attribute_b == "hello dummy"
-        return SparkRapidsMLDummyModel.from_row(result)
+        return SparkRapidsMLDummyModel._from_row(result)
 
 
 class SparkRapidsMLDummyModel(
@@ -263,7 +263,7 @@ class SparkRapidsMLDummyModel(
         )  # type: ignore
         self.model_attribute_a = model_attribute_a
         self.model_attribute_b = model_attribute_b
-        self.set_params(**kwargs)
+        self._set_params(**kwargs)
 
     def setInputCols(self, value: List[str]) -> "SparkRapidsMLDummyModel":
         return self._set(inputCols=value)
@@ -484,3 +484,36 @@ def test_dummy(gpu_number: int, tmp_path: str) -> None:
             for x, y in zip(ret, data):
                 for i in range(n):
                     assert x[i] == y[i]
+
+
+def test_num_workers_validation() -> None:
+    from .sparksession import CleanSparkSession
+
+    with CleanSparkSession() as spark:
+        data = [
+            [1.0, 4.0, 4.0, 4.0],
+            [2.0, 2.0, 2.0, 2.0],
+            [3.0, 3.0, 3.0, 2.0],
+            [3.0, 3.0, 3.0, 2.0],
+            [5.0, 2.0, 1.0, 3.0],
+        ]
+        m = len(data)
+        n = len(data[0])
+        input_cols = ["c1", "c2", "c3", "c4"]
+
+        df = spark.sparkContext.parallelize(data).toDF(input_cols)
+
+        dummy = SparkRapidsMLDummy(
+            inputCols=input_cols,
+            a=100,
+            num_workers=55,
+            partition_num=1,
+            m=m,
+            n=n,
+        )
+
+        with pytest.raises(
+            ValueError,
+            match="The num_workers \(55\) should be less than or equal to spark default parallelism",
+        ):
+            dummy.fit(df)
