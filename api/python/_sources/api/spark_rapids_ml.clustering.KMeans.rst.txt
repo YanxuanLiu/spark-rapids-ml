@@ -56,8 +56,6 @@ KMeans
        ~KMeans.getTol
        ~KMeans.hasDefault
        ~KMeans.hasParam
-       ~KMeans.initialize_cuml_logging
-       ~KMeans.initialize_cuml_params
        ~KMeans.isDefined
        ~KMeans.isSet
        ~KMeans.load
@@ -71,8 +69,6 @@ KMeans
        ~KMeans.setPredictionCol
        ~KMeans.setSeed
        ~KMeans.setTol
-       ~KMeans.set_gpu_device
-       ~KMeans.set_params
        ~KMeans.write
 
     
@@ -129,8 +125,6 @@ KMeans
     .. automethod:: getTol
     .. automethod:: hasDefault
     .. automethod:: hasParam
-    .. automethod:: initialize_cuml_logging
-    .. automethod:: initialize_cuml_params
     .. automethod:: isDefined
     .. automethod:: isSet
     .. automethod:: load
@@ -144,8 +138,6 @@ KMeans
     .. automethod:: setPredictionCol
     .. automethod:: setSeed
     .. automethod:: setTol
-    .. automethod:: set_gpu_device
-    .. automethod:: set_params
     .. automethod:: write
 
     

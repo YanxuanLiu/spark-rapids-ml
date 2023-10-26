@@ -58,8 +58,6 @@ RandomForestClassifier
        ~RandomForestClassifier.getSeed
        ~RandomForestClassifier.hasDefault
        ~RandomForestClassifier.hasParam
-       ~RandomForestClassifier.initialize_cuml_logging
-       ~RandomForestClassifier.initialize_cuml_params
        ~RandomForestClassifier.isDefined
        ~RandomForestClassifier.isSet
        ~RandomForestClassifier.load
@@ -79,8 +77,6 @@ RandomForestClassifier
        ~RandomForestClassifier.setPredictionCol
        ~RandomForestClassifier.setProbabilityCol
        ~RandomForestClassifier.setSeed
-       ~RandomForestClassifier.set_gpu_device
-       ~RandomForestClassifier.set_params
        ~RandomForestClassifier.write
 
     
@@ -143,8 +139,6 @@ RandomForestClassifier
     .. automethod:: getSeed
     .. automethod:: hasDefault
     .. automethod:: hasParam
-    .. automethod:: initialize_cuml_logging
-    .. automethod:: initialize_cuml_params
     .. automethod:: isDefined
     .. automethod:: isSet
     .. automethod:: load
@@ -164,8 +158,6 @@ RandomForestClassifier
     .. automethod:: setPredictionCol
     .. automethod:: setProbabilityCol
     .. automethod:: setSeed
-    .. automethod:: set_gpu_device
-    .. automethod:: set_params
     .. automethod:: write
 
     

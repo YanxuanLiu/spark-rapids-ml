@@ -42,6 +42,7 @@ LogisticRegression
        ~LogisticRegression.extractParamMap
        ~LogisticRegression.fit
        ~LogisticRegression.fitMultiple
+       ~LogisticRegression.getElasticNetParam
        ~LogisticRegression.getFeaturesCol
        ~LogisticRegression.getFeaturesCols
        ~LogisticRegression.getFitIntercept
@@ -55,14 +56,13 @@ LogisticRegression
        ~LogisticRegression.getTol
        ~LogisticRegression.hasDefault
        ~LogisticRegression.hasParam
-       ~LogisticRegression.initialize_cuml_logging
-       ~LogisticRegression.initialize_cuml_params
        ~LogisticRegression.isDefined
        ~LogisticRegression.isSet
        ~LogisticRegression.load
        ~LogisticRegression.read
        ~LogisticRegression.save
        ~LogisticRegression.set
+       ~LogisticRegression.setElasticNetParam
        ~LogisticRegression.setFeaturesCol
        ~LogisticRegression.setFeaturesCols
        ~LogisticRegression.setFitIntercept
@@ -72,8 +72,6 @@ LogisticRegression
        ~LogisticRegression.setProbabilityCol
        ~LogisticRegression.setRegParam
        ~LogisticRegression.setTol
-       ~LogisticRegression.set_gpu_device
-       ~LogisticRegression.set_params
        ~LogisticRegression.write
 
     
@@ -87,6 +85,7 @@ LogisticRegression
     .. autosummary::
     
        ~LogisticRegression.cuml_params
+       ~LogisticRegression.elasticNetParam
        ~LogisticRegression.featuresCol
        ~LogisticRegression.featuresCols
        ~LogisticRegression.fitIntercept
@@ -115,6 +114,7 @@ LogisticRegression
     .. automethod:: extractParamMap
     .. automethod:: fit
     .. automethod:: fitMultiple
+    .. automethod:: getElasticNetParam
     .. automethod:: getFeaturesCol
     .. automethod:: getFeaturesCols
     .. automethod:: getFitIntercept
@@ -128,14 +128,13 @@ LogisticRegression
     .. automethod:: getTol
     .. automethod:: hasDefault
     .. automethod:: hasParam
-    .. automethod:: initialize_cuml_logging
-    .. automethod:: initialize_cuml_params
     .. automethod:: isDefined
     .. automethod:: isSet
     .. automethod:: load
     .. automethod:: read
     .. automethod:: save
     .. automethod:: set
+    .. automethod:: setElasticNetParam
     .. automethod:: setFeaturesCol
     .. automethod:: setFeaturesCols
     .. automethod:: setFitIntercept
@@ -145,8 +144,6 @@ LogisticRegression
     .. automethod:: setProbabilityCol
     .. automethod:: setRegParam
     .. automethod:: setTol
-    .. automethod:: set_gpu_device
-    .. automethod:: set_params
     .. automethod:: write
 
     
@@ -159,6 +156,7 @@ LogisticRegression
 
     
     .. autoattribute:: cuml_params
+    .. autoattribute:: elasticNetParam
     .. autoattribute:: featuresCol
     .. autoattribute:: featuresCols
     .. autoattribute:: fitIntercept
