@@ -14,11 +14,19 @@
 # limitations under the License.
 #
 
-from typing import List, Tuple, Type, TypeVar
+from typing import Any, Dict, List, Tuple, Type, TypeVar
 
 import numpy as np
+import pyspark
 import pytest
 from _pytest.logging import LogCaptureFixture
+from packaging import version
+
+if version.parse(pyspark.__version__) < version.parse("3.4.0"):
+    from pyspark.sql.utils import IllegalArgumentException  # type: ignore
+else:
+    from pyspark.errors import IllegalArgumentException  # type: ignore
+
 from pyspark.ml.clustering import KMeans as SparkKMeans
 from pyspark.ml.clustering import KMeansModel as SparkKMeansModel
 from pyspark.ml.functions import array_to_vector
@@ -86,7 +94,7 @@ def test_kmeans_params(
     assert_params(default_kmeans, default_spark_params, default_cuml_params)
 
     # Spark Params constructor
-    spark_params = {"k": 10, "maxIter": 100}
+    spark_params: Dict[str, Any] = {"k": 10, "maxIter": 100}
     spark_kmeans = KMeans(**spark_params)
     expected_spark_params = default_spark_params.copy()
     expected_spark_params.update(spark_params)
@@ -95,7 +103,7 @@ def test_kmeans_params(
     assert_params(spark_kmeans, expected_spark_params, expected_cuml_params)
 
     # cuml_params constructor
-    cuml_params = {
+    cuml_params: Dict[str, Any] = {
         "n_clusters": 10,
         "max_iter": 100,
         "tol": 1e-1,
@@ -120,7 +128,7 @@ def test_kmeans_params(
     assert_params(loaded_kmeans, expected_spark_params, expected_cuml_params)
 
     # conflicting params
-    conflicting_params = {
+    conflicting_params: Dict[str, Any] = {
         "k": 2,
         "n_clusters": 10,
     }
@@ -182,7 +190,7 @@ def test_kmeans_basic(gpu_number: int, tmp_path: str) -> None:
 
         # test transform function
         label_df = kmeans_model.transform(df)
-        assert "features" in label_df.columns
+        assert ["features", "prediction"] == sorted(label_df.columns)
 
         o_col = kmeans_model.getPredictionCol()
         labels = [row[o_col] for row in label_df.collect()]
@@ -328,7 +336,14 @@ def test_kmeans_spark_compat(
         ]
         df = spark.createDataFrame(data, ["features", "weighCol"])
 
-        kmeans = _KMeans(k=2)
+        import pyspark
+        from packaging import version
+
+        if version.parse(pyspark.__version__) < version.parse("3.4.0"):
+            kmeans = _KMeans(k=2)
+        else:
+            kmeans = _KMeans(k=2, solver="auto", maxBlockSizeInMB=0)  # type: ignore # only spark >= 3.4 supports solver and maxblockSize
+
         kmeans.setSeed(1)
         kmeans.setMaxIter(10)
         if isinstance(kmeans, SparkKMeans):
@@ -400,3 +415,23 @@ def test_kmeans_spark_compat(
 
         assert model.transform(df).take(1) == model2.transform(df).take(1)
         # True
+
+
+def test_parameters_validation() -> None:
+    data = [
+        ([1.0, 2.0], 1.0),
+        ([3.0, 1.0], 0.0),
+    ]
+
+    with CleanSparkSession() as spark:
+        features_col = "features"
+        label_col = "label"
+        schema = features_col + " array<float>, " + label_col + " float"
+        df = spark.createDataFrame(data, schema=schema)
+        with pytest.raises(IllegalArgumentException, match="k given invalid value -1"):
+            KMeans(k=-1).fit(df)
+
+        with pytest.raises(
+            IllegalArgumentException, match="maxIter given invalid value -1"
+        ):
+            KMeans().setMaxIter(-1).fit(df)

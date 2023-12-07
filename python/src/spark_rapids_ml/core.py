@@ -16,7 +16,7 @@
 import json
 import os
 import threading
-from abc import abstractmethod
+from abc import ABCMeta, abstractmethod
 from collections import namedtuple
 from typing import (
     TYPE_CHECKING,
@@ -36,7 +36,7 @@ from typing import (
 
 import numpy as np
 import pandas as pd
-from pyspark import RDD, TaskContext
+from pyspark import RDD, SparkConf, TaskContext
 from pyspark.ml import Estimator, Model
 from pyspark.ml.evaluation import Evaluator
 from pyspark.ml.functions import array_to_vector, vector_to_array
@@ -46,6 +46,7 @@ from pyspark.ml.param.shared import (
     HasOutputCol,
     HasPredictionCol,
     HasProbabilityCol,
+    HasRawPredictionCol,
 )
 from pyspark.ml.util import (
     DefaultParamsReader,
@@ -55,6 +56,7 @@ from pyspark.ml.util import (
     MLWritable,
     MLWriter,
 )
+from pyspark.ml.wrapper import JavaParams
 from pyspark.sql import Column, DataFrame
 from pyspark.sql.functions import col, struct
 from pyspark.sql.pandas.functions import pandas_udf
@@ -68,6 +70,7 @@ from pyspark.sql.types import (
 )
 
 from .common.cuml_context import CumlContext
+from .metrics import EvalMetricInfo
 from .params import _CumlParams
 from .utils import (
     _ArrayOrder,
@@ -116,8 +119,10 @@ Alias = namedtuple("Alias", ("data", "label", "row_number"))
 alias = Alias("cuml_values", "cuml_label", "unique_id")
 
 # Global prediction names
-Pred = namedtuple("Pred", ("prediction", "probability", "model_index"))
-pred = Pred("prediction", "probability", "model_index")
+Pred = namedtuple(
+    "Pred", ("prediction", "probability", "model_index", "raw_prediction")
+)
+pred = Pred("prediction", "probability", "model_index", "raw_prediction")
 
 # Global parameter alias used by core and subclasses.
 ParamAlias = namedtuple(
@@ -129,10 +134,6 @@ param_alias = ParamAlias(
 )
 
 CumlModel = TypeVar("CumlModel", bound="_CumlModel")
-
-# Global parameter used by core and subclasses.
-TransformEvaluate = namedtuple("TransformEvaluate", ("transform", "transform_evaluate"))
-transform_evaluate = TransformEvaluate("transform", "transform_evaluate")
 
 
 class _CumlEstimatorWriter(MLWriter):
@@ -230,11 +231,11 @@ class _CumlCommon(MLWritable, MLReadable):
         super().__init__()
 
     @staticmethod
-    def _set_gpu_device(
+    def _get_gpu_device(
         context: Optional[TaskContext], is_local: bool, is_transform: bool = False
-    ) -> None:
+    ) -> int:
         """
-        Set gpu device according to the spark task resources.
+        Get gpu device according to the spark task resources.
 
         If it is local mode, we use partition id as gpu id for training
         and (partition id ) % gpus for transform.
@@ -254,6 +255,25 @@ class _CumlCommon(MLWritable, MLReadable):
                 gpu_id = partition_id
         else:
             gpu_id = _get_gpu_id(context)
+
+        return gpu_id
+
+    @staticmethod
+    def _set_gpu_device(
+        context: Optional[TaskContext], is_local: bool, is_transform: bool = False
+    ) -> None:
+        """
+        Set gpu device according to the spark task resources.
+
+        If it is local mode, we use partition id as gpu id for training
+        and (partition id ) % gpus for transform.
+        """
+        # Get the GPU ID from resources
+        assert context is not None
+
+        import cupy
+
+        gpu_id = _CumlCommon._get_gpu_device(context, is_local, is_transform)
 
         cupy.cuda.Device(gpu_id).use()
 
@@ -281,6 +301,16 @@ class _CumlCommon(MLWritable, MLReadable):
                 raise ValueError(f"invalid value for verbose parameter: {verbose}")
 
             cuml_logger.set_level(log_level)
+
+    def _pyspark_class(self) -> Optional[ABCMeta]:
+        """
+        Subclass should override to return corresponding pyspark.ml class
+        Ex. logistic regression should return pyspark.ml.classification.LogisticRegression
+        Return None if no corresponding class in pyspark, e.g. knn
+        """
+        raise NotImplementedError(
+            "pyspark.ml class corresponding to estimator not specified."
+        )
 
 
 class _CumlCaller(_CumlParams, _CumlCommon):
@@ -400,6 +430,31 @@ class _CumlCaller(_CumlParams, _CumlCommon):
         """
         return (True, False)
 
+    def _validate_parameters(self) -> None:
+        cls_name = self._pyspark_class()
+
+        if cls_name is not None:
+            pyspark_est = cls_name()
+            # Both pyspark and cuml may have a parameter with the same name,
+            # but cuml might have additional optional values that can be set.
+            # If we transfer these cuml-specific values to the Spark JVM,
+            # it would result in an exception.
+            # To avoid this issue, we skip transferring these parameters
+            # since the mapped parameters have been validated in _get_cuml_mapping_value.
+            cuml_est = self.copy()
+            cuml_params = cuml_est._param_value_mapping().keys()
+            param_mapping = cuml_est._param_mapping()
+            pyspark_params = [k for k, v in param_mapping.items() if v in cuml_params]
+            for p in pyspark_params:
+                cuml_est.clear(cuml_est.getParam(p))
+
+            cuml_est._copyValues(pyspark_est)
+            # validate the parameters
+            pyspark_est._transfer_params_to_java()
+
+            del pyspark_est
+            del cuml_est
+
     @abstractmethod
     def _get_cuml_fit_func(
         self,
@@ -449,6 +504,7 @@ class _CumlCaller(_CumlParams, _CumlCommon):
         :class:`Transformer`
             fitted model
         """
+        self._validate_parameters()
 
         cls = self.__class__
 
@@ -500,26 +556,27 @@ class _CumlCaller(_CumlParams, _CumlCommon):
         (enable_nccl, require_ucx) = self._require_nccl_ucx()
 
         def _train_udf(pdf_iter: Iterator[pd.DataFrame]) -> pd.DataFrame:
+            import cupy as cp
             from pyspark import BarrierTaskContext
 
+            context = BarrierTaskContext.get()
+            partition_id = context.partitionId()
             logger = get_logger(cls)
 
-            import cupy as cp
+            # set gpu device
+            _CumlCommon._set_gpu_device(context, is_local)
 
             if cuda_managed_mem_enabled:
                 import rmm
                 from rmm.allocators.cupy import rmm_cupy_allocator
 
-                rmm.reinitialize(managed_memory=True)
+                rmm.reinitialize(
+                    managed_memory=True,
+                    devices=_CumlCommon._get_gpu_device(context, is_local),
+                )
                 cp.cuda.set_allocator(rmm_cupy_allocator)
 
             _CumlCommon._initialize_cuml_logging(cuml_verbose)
-
-            context = BarrierTaskContext.get()
-            partition_id = context.partitionId()
-
-            # set gpu device
-            _CumlCommon._set_gpu_device(context, is_local)
 
             # handle the input
             # inputs = [(X, Optional(y)), (X, Optional(y))]
@@ -694,59 +751,73 @@ class _CumlEstimator(Estimator, _CumlCaller):
         else:
             return super().fitMultiple(dataset, paramMaps)
 
+    def _skip_stage_level_scheduling(self, spark_version: str, conf: SparkConf) -> bool:
+        """Check if stage-level scheduling is not needed,
+        return true to skip stage-level scheduling"""
+
+        if spark_version < "3.4.0":
+            self.logger.info(
+                "Stage-level scheduling in spark-rapids-ml requires spark version 3.4.0+"
+            )
+            return True
+
+        if not _is_standalone_or_localcluster(conf):
+            self.logger.info(
+                "Stage-level scheduling in spark-rapids-ml requires spark standalone or "
+                "local-cluster mode"
+            )
+            return True
+
+        executor_cores = conf.get("spark.executor.cores")
+        executor_gpus = conf.get("spark.executor.resource.gpu.amount")
+        if executor_cores is None or executor_gpus is None:
+            self.logger.info(
+                "Stage-level scheduling in spark-rapids-ml requires spark.executor.cores, "
+                "spark.executor.resource.gpu.amount to be set."
+            )
+            return True
+
+        if int(executor_cores) == 1:
+            # there will be only 1 task running at any time.
+            self.logger.info(
+                "Stage-level scheduling in spark-rapids-ml requires spark.executor.cores > 1 "
+            )
+            return True
+
+        if int(executor_gpus) > 1:
+            # For spark.executor.resource.gpu.amount > 1, we suppose user knows how to configure
+            # to make spark-rapids-ml run successfully.
+            self.logger.info(
+                "Stage-level scheduling in spark-rapids-ml will not work "
+                "when spark.executor.resource.gpu.amount>1"
+            )
+            return True
+
+        task_gpu_amount = conf.get("spark.task.resource.gpu.amount")
+
+        if task_gpu_amount is None:
+            # The ETL tasks will not grab a gpu when spark.task.resource.gpu.amount is not set,
+            # but with stage-level scheduling, we can make training task grab the gpu.
+            return False
+
+        if float(task_gpu_amount) == float(executor_gpus):
+            # spark.executor.resource.gpu.amount=spark.task.resource.gpu.amount "
+            # results in only 1 task running at a time, which may cause perf issue.
+            return True
+
+        # We can enable stage-level scheduling
+        return False
+
     def _try_stage_level_scheduling(self, rdd: RDD) -> RDD:
         ss = _get_spark_session()
         sc = ss.sparkContext
 
-        if ss.version < "3.4.0":
-            self.logger.warning(
-                "Stage level scheduling in spark-rapids-ml requires spark version 3.4.0+"
-            )
-            return rdd
-        elif not _is_standalone_or_localcluster(sc):
-            # Only standalone or local-cluster supports stage-level scheduling with dynamic
-            # allocation disabled.
-            self.logger.warning(
-                "Stage level scheduling in spark-rapids-ml only works on spark standalone or "
-                "local cluster mode"
-            )
+        if self._skip_stage_level_scheduling(ss.version, sc.getConf()):
             return rdd
 
-        executor_cores = sc.getConf().get("spark.executor.cores")
-        executor_gpu_amount = sc.getConf().get("spark.executor.resource.gpu.amount")
-
-        if executor_cores is None or executor_gpu_amount is None:
-            self.logger.warning(
-                "Stage level scheduling in spark-rapids-ml requires spark.executor.cores, "
-                "spark.executor.resource.gpu.amount to be set "
-            )
-            return rdd
-
-        if int(executor_gpu_amount) > 1:
-            # For spark.executor.resource.gpu.amount>1, we suppose user knows how to configure
-            # to make spark-rapids-ml run successfully.
-            #
-            self.logger.warning(
-                "Stage level scheduling in spark-rapids-ml will not work "
-                "when spark.executor.resource.gpu.amount>1"
-            )
-            return rdd
-
-        task_gpu_amount = sc.getConf().get("spark.task.resource.gpu.amount")
-
-        if task_gpu_amount is None:
-            # if spark.task.resource.gpu.amount is not set, the default concurrent tasks
-            # with gpu requirement will be 1, which means 2 training tasks will never
-            # be scheduled into the same executor.
-            return rdd
-
-        if float(task_gpu_amount) == float(executor_gpu_amount):
-            self.logger.warning(
-                f"The configuration of cores (exec = {executor_gpu_amount} task = {task_gpu_amount}, "
-                f"runnable tasks = 1) will result in wasted resources due to resource gpu limiting"
-                f"the number of runnable tasks per executor to: 1. Please adjust your configuration."
-            )
-            return rdd
+        # executor_cores will not be None
+        executor_cores = ss.sparkContext.getConf().get("spark.executor.cores")
+        assert executor_cores is not None
 
         from pyspark.resource.profile import ResourceProfileBuilder
         from pyspark.resource.requests import TaskResourceRequests
@@ -761,10 +832,12 @@ class _CumlEstimator(Estimator, _CumlCaller):
         spark_plugins = ss.conf.get("spark.plugins", " ")
         assert spark_plugins is not None
         spark_rapids_sql_enabled = ss.conf.get("spark.rapids.sql.enabled", "true")
+        assert spark_rapids_sql_enabled is not None
+
         task_cores = (
             int(executor_cores)
             if "com.nvidia.spark.SQLPlugin" in spark_plugins
-            and "true" == spark_rapids_sql_enabled
+            and "true" == spark_rapids_sql_enabled.lower()
             else (int(executor_cores) // 2) + 1
         )
         # task_gpus means how many slots per gpu address the task requires,
@@ -923,8 +996,10 @@ class _CumlModel(Model, _CumlParams, _CumlCommon):
 
     @abstractmethod
     def _get_cuml_transform_func(
-        self, dataset: DataFrame, category: str = transform_evaluate.transform
-    ) -> Tuple[_ConstructFunc, _TransformFunc, Optional[_EvaluateFunc],]:
+        self,
+        dataset: DataFrame,
+        eval_metric_info: Optional[EvalMetricInfo] = None,
+    ) -> Tuple[_ConstructFunc, _TransformFunc, Optional[_EvaluateFunc]]:
         """
         Subclass must implement this function to return three functions,
         1. a function to construct cuml counterpart instance
@@ -943,7 +1018,7 @@ class _CumlModel(Model, _CumlParams, _CumlCommon):
                 ...
             ...
 
-            # please note that if category is transform, the evaluate function will be ignored.
+            # please note that if eval_metric_info is None, the evaluate function will be None.
             return _construct_cuml_object, _cuml_transform, _evaluate
 
         _get_cuml_transform_func itself runs on the driver side, while the returned
@@ -1049,7 +1124,10 @@ class _CumlModel(Model, _CumlParams, _CumlCommon):
         return dataset, select_cols, input_is_multi_cols, tmp_cols
 
     def _transform_evaluate_internal(
-        self, dataset: DataFrame, schema: Union[StructType, str]
+        self,
+        dataset: DataFrame,
+        schema: Union[StructType, str],
+        eval_metric_info: Optional[EvalMetricInfo] = None,
     ) -> DataFrame:
         """Internal API to support transform and evaluation in a single pass"""
         dataset, select_cols, input_is_multi_cols, _ = self._pre_process_data(dataset)
@@ -1061,9 +1139,7 @@ class _CumlModel(Model, _CumlParams, _CumlCommon):
             construct_cuml_object_func,
             cuml_transform_func,
             evaluate_func,
-        ) = self._get_cuml_transform_func(
-            dataset, transform_evaluate.transform_evaluate
-        )
+        ) = self._get_cuml_transform_func(dataset, eval_metric_info)
         if evaluate_func:
             dataset = dataset.select(alias.label, *select_cols)
         else:
@@ -1174,6 +1250,20 @@ class _CumlModelWithColumns(_CumlModel):
 
         return True if isinstance(self, HasProbabilityCol) else False
 
+    def _has_raw_pred_col(self) -> bool:
+        """This API is needed and can be overwritten by subclass which
+        hasn't implemented predict raw yet"""
+
+        return True if isinstance(self, HasRawPredictionCol) else False
+
+    def _use_prob_as_raw_pred_col(self) -> bool:
+        """This API is needed and can be overwritten by subclass which
+        doesn't support raw predictions in cuml to use copy of probability
+        column instead.
+        """
+
+        return False
+
     def _get_prediction_name(self) -> str:
         """Different algos have different prediction names,
         eg, PCA: value of outputCol param, RF/LR/Kmeans: value of predictionCol name"""
@@ -1225,7 +1315,7 @@ class _CumlModelWithColumns(_CumlModel):
         pred_col = predict_udf(struct(*select_cols))
 
         if self._is_single_pred(dataset.schema):
-            return dataset.withColumn(pred_name, pred_col)
+            return dataset.withColumn(pred_name, pred_col).drop(*tmp_cols)
         else:
             # Avoid same naming. `echo sparkcuml | base64` = c3BhcmtjdW1sCg==
             pred_struct_col_name = "_prediction_struct_c3BhcmtjdW1sCg=="
@@ -1245,6 +1335,25 @@ class _CumlModelWithColumns(_CumlModel):
                         getattr(col(pred_struct_col_name), pred.probability)
                     ),
                 )
+            # 2a. Handle raw prediction - for algos that have it in spark but not yet supported in cuml,
+            # we duplicate probability col for interop with default raw prediction col
+            # in spark evaluators. i.e. auc works equivalently with probabilities.
+            # TBD replace with rawPredictions in individual algos as support is added
+            if self._has_raw_pred_col():
+                raw_pred_col = self.getOrDefault("rawPredictionCol")
+                if self._use_prob_as_raw_pred_col():
+                    dataset = dataset.withColumn(
+                        raw_pred_col,
+                        col(probability_col),
+                    )
+                else:
+                    # class supports raw predictions from cuml layer
+                    dataset = dataset.withColumn(
+                        raw_pred_col,
+                        array_to_vector(
+                            getattr(col(pred_struct_col_name), pred.raw_prediction)
+                        ),
+                    )
 
             # 3. Drop the unused column
             dataset = dataset.drop(pred_struct_col_name)
@@ -1257,6 +1366,8 @@ class _CumlModelWithColumns(_CumlModel):
         schema = f"{pred.prediction} double"
         if self._has_probability_col():
             schema = f"{schema}, {pred.probability} array<double>"
+            if self._has_raw_pred_col() and not self._use_prob_as_raw_pred_col():
+                schema = f"{schema}, {pred.raw_prediction} array<double>"
         else:
             schema = f"double"
 

@@ -2,16 +2,29 @@ from typing import Any, Dict, List, Tuple, Type, TypeVar
 
 import cuml
 import numpy as np
+import pyspark
 import pytest
 from _pytest.logging import LogCaptureFixture
 from packaging import version
+
+if version.parse(pyspark.__version__) < version.parse("3.4.0"):
+    from pyspark.sql.utils import IllegalArgumentException  # type: ignore
+else:
+    from pyspark.errors import IllegalArgumentException  # type: ignore
+
 from pyspark.ml.classification import LogisticRegression as SparkLogisticRegression
 from pyspark.ml.classification import (
     LogisticRegressionModel as SparkLogisticRegressionModel,
 )
+from pyspark.ml.evaluation import (
+    BinaryClassificationEvaluator,
+    MulticlassClassificationEvaluator,
+)
 from pyspark.ml.functions import array_to_vector
 from pyspark.ml.linalg import DenseMatrix, DenseVector, SparseVector, Vectors, VectorUDT
 from pyspark.ml.param import Param
+from pyspark.ml.tuning import CrossValidator as SparkCrossValidator
+from pyspark.ml.tuning import CrossValidatorModel, ParamGridBuilder
 from pyspark.sql import Row
 from pyspark.sql.functions import array, col
 
@@ -23,6 +36,7 @@ if version.parse(cuml.__version__) < version.parse("23.08.00"):
 import warnings
 
 from spark_rapids_ml.classification import LogisticRegression, LogisticRegressionModel
+from spark_rapids_ml.tuning import CrossValidator
 
 from .sparksession import CleanSparkSession
 from .utils import (
@@ -73,10 +87,12 @@ def test_toy_example(gpu_number: int) -> None:
         def assert_transform(model: LogisticRegressionModel) -> None:
             preds_df_local = model.transform(df).collect()
             preds = [row["prediction"] for row in preds_df_local]
-            assert preds == [1.0, 1.0, 0.0, 0.0]
             probs = [row["probs"] for row in preds_df_local]
+            raw_preds = [row["rawPrediction"] for row in preds_df_local]
+            assert preds == [1.0, 1.0, 0.0, 0.0]
             assert len(probs) == len(preds)
             assert [p[1] > 0.5 for p in probs] == [True, True, False, False]
+            assert [p[1] > 0 for p in raw_preds] == [True, True, False, False]
 
         assert_transform(lr_model)
 
@@ -285,7 +301,7 @@ def test_classifier(
         assert spark_lr_model.dtype == "float32"
 
         assert array_equal(np.array(spark_lr_model.coef_), cu_lr.coef_, tolerance)
-        assert array_equal(spark_lr_model.intercept_, cu_lr.intercept_, tolerance)
+        assert array_equal(spark_lr_model.intercept_, cu_lr.intercept_, tolerance)  # type: ignore
 
         if n_classes == 2:
             assert len(spark_lr_model.coef_) == 1
@@ -459,16 +475,11 @@ def test_compat(
             tolerance,
         )
 
-        if isinstance(blor_model, SparkLogisticRegressionModel):
-            assert array_equal(
-                output.newRawPrediction.toArray(),
-                Vectors.dense([-2.4238, 2.4238]).toArray(),
-                tolerance,
-            )
-        else:
-            warnings.warn(
-                "transform of spark rapids ml currently does not support rawPredictionCol"
-            )
+        array_equal(
+            output.newRawPrediction.toArray(),
+            Vectors.dense([-2.4238, 2.4238]).toArray(),
+            tolerance,
+        )
 
         blor_path = tmp_path + "/log_reg"
         blor.save(blor_path)
@@ -653,7 +664,7 @@ def test_compat_multinomial(
                 regParam=0.1,
                 elasticNetParam=0.2,
                 fitIntercept=fit_intercept,
-                family="multimonial",
+                family="multinomial",
             )
 
         assert mlor.getRegParam() == 0.1
@@ -762,10 +773,11 @@ def test_compat_multinomial(
                 "features",
                 "prediction",
                 "newProbability",
+                "rawPrediction",
             ]
             assert (
                 output_df.schema.simpleString()
-                == "struct<weight:float,label:float,features:vector,prediction:double,newProbability:vector>"
+                == "struct<weight:float,label:float,features:vector,prediction:double,newProbability:vector,rawPrediction:vector>"
             )
 
         output_res = output_df.collect()
@@ -815,51 +827,46 @@ def test_compat_multinomial(
             tolerance,
         )
 
-        if isinstance(mlor_model, SparkLogisticRegressionModel):
-            assert array_equal(
-                output_res[0].rawPrediction.toArray(),
-                [0.84395339, 1.87349042, -0.84395339, -1.87349042],
-                tolerance,
-            )
-            assert array_equal(
-                output_res[1].rawPrediction.toArray(),
-                [0.78209218, 2.84116623, -0.78209218, -2.84116623],
-                tolerance,
-            )
-            assert array_equal(
-                output_res[2].rawPrediction.toArray(),
-                [1.87349042, 0.84395339, -1.87349042, -0.84395339],
-                tolerance,
-            )
-            assert array_equal(
-                output_res[3].rawPrediction.toArray(),
-                [2.84116623, 0.78209218, -2.84116623, -0.78209218],
-                tolerance,
-            )
-            assert array_equal(
-                output_res[4].rawPrediction.toArray(),
-                [-0.84395339, -1.87349042, 0.84395339, 1.87349042],
-                tolerance,
-            )
-            assert array_equal(
-                output_res[5].rawPrediction.toArray(),
-                [-0.78209218, -2.84116623, 0.78209218, 2.84116623],
-            )
-            assert array_equal(
-                output_res[6].rawPrediction.toArray(),
-                [-1.87349042, -0.84395339, 1.87349042, 0.84395339],
-                tolerance,
-            )
-            assert array_equal(
-                output_res[7].rawPrediction.toArray(),
-                [-2.84116623, -0.78209218, 2.84116623, 0.78209218],
-                tolerance,
-            )
-
-        else:
-            warnings.warn(
-                "transform of spark rapids ml currently does not support rawPredictionCol"
-            )
+        assert array_equal(
+            output_res[0].rawPrediction.toArray(),
+            [0.84395339, 1.87349042, -0.84395339, -1.87349042],
+            tolerance,
+        )
+        assert array_equal(
+            output_res[1].rawPrediction.toArray(),
+            [0.78209218, 2.84116623, -0.78209218, -2.84116623],
+            tolerance,
+        )
+        assert array_equal(
+            output_res[2].rawPrediction.toArray(),
+            [1.87349042, 0.84395339, -1.87349042, -0.84395339],
+            tolerance,
+        )
+        assert array_equal(
+            output_res[3].rawPrediction.toArray(),
+            [2.84116623, 0.78209218, -2.84116623, -0.78209218],
+            tolerance,
+        )
+        assert array_equal(
+            output_res[4].rawPrediction.toArray(),
+            [-0.84395339, -1.87349042, 0.84395339, 1.87349042],
+            tolerance,
+        )
+        assert array_equal(
+            output_res[5].rawPrediction.toArray(),
+            [-0.78209218, -2.84116623, 0.78209218, 2.84116623],
+            tolerance,
+        )
+        assert array_equal(
+            output_res[6].rawPrediction.toArray(),
+            [-1.87349042, -0.84395339, 1.87349042, 0.84395339],
+            tolerance,
+        )
+        assert array_equal(
+            output_res[7].rawPrediction.toArray(),
+            [-2.84116623, -0.78209218, 2.84116623, 0.78209218],
+            tolerance,
+        )
 
         mlor_path = tmp_path + "/m_log_reg"
         mlor.save(mlor_path)
@@ -975,3 +982,97 @@ def test_quick(
         assert penalty == "elasticnet"
         assert l1_strength == reg_param * elasticNet_param
         assert l2_strength == reg_param * (1 - elasticNet_param)
+
+
+@pytest.mark.parametrize("metric_name", ["accuracy", "logLoss", "areaUnderROC"])
+@pytest.mark.parametrize("feature_type", [feature_types.vector])
+@pytest.mark.parametrize("data_type", [np.float32])
+@pytest.mark.parametrize("data_shape", [(100, 8)], ids=idfn)
+def test_crossvalidator_logistic_regression(
+    metric_name: str,
+    feature_type: str,
+    data_type: np.dtype,
+    data_shape: Tuple[int, int],
+) -> None:
+    # Train a toy model
+
+    n_classes = 2 if metric_name == "areaUnderROC" else 10
+
+    X, _, y, _ = make_classification_dataset(
+        datatype=data_type,
+        nrows=data_shape[0],
+        ncols=data_shape[1],
+        n_classes=n_classes,
+        n_informative=data_shape[1],
+        n_redundant=0,
+        n_repeated=0,
+    )
+
+    with CleanSparkSession() as spark:
+        df, features_col, label_col = create_pyspark_dataframe(
+            spark, feature_type, data_type, X, y
+        )
+        assert label_col is not None
+
+        lr = LogisticRegression()
+        lr.setFeaturesCol(features_col)
+        lr.setLabelCol(label_col)
+
+        evaluator = (
+            BinaryClassificationEvaluator()
+            if n_classes == 2
+            else MulticlassClassificationEvaluator()
+        )
+        evaluator.setLabelCol(label_col)  # type: ignore
+        evaluator.setMetricName(metric_name)  # type: ignore
+
+        grid = (
+            ParamGridBuilder()
+            .addGrid(lr.regParam, [0.1, 0.2])
+            .addGrid(lr.elasticNetParam, [0.2, 0.5])
+            .build()
+        )
+
+        cv = CrossValidator(
+            estimator=lr,
+            estimatorParamMaps=grid,
+            evaluator=evaluator,
+            numFolds=2,
+            seed=1,
+        )
+
+        # without exception
+        model: CrossValidatorModel = cv.fit(df)
+
+        spark_cv = SparkCrossValidator(
+            estimator=lr,
+            estimatorParamMaps=grid,
+            evaluator=evaluator,
+            numFolds=2,
+            seed=1,
+        )
+        spark_cv_model = spark_cv.fit(df)
+
+        assert array_equal(model.avgMetrics, spark_cv_model.avgMetrics, 0.0005)
+
+
+def test_parameters_validation() -> None:
+    data = [
+        ([1.0, 2.0], 1.0),
+        ([3.0, 1.0], 0.0),
+    ]
+
+    with CleanSparkSession() as spark:
+        features_col = "features"
+        label_col = "label"
+        schema = features_col + " array<float>, " + label_col + " float"
+        df = spark.createDataFrame(data, schema=schema)
+        with pytest.raises(
+            IllegalArgumentException, match="maxIter given invalid value -1"
+        ):
+            LogisticRegression(maxIter=-1).fit(df)
+
+        # regParam is mapped to different value in LogisticRegression which should be in
+        # charge of validating it.
+        with pytest.raises(ValueError, match="C or regParam given invalid value -1.0"):
+            LogisticRegression().setRegParam(-1.0).fit(df)

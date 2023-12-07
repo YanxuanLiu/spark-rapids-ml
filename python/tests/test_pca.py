@@ -14,11 +14,19 @@
 # limitations under the License.
 #
 
-from typing import Tuple, Type, TypeVar
+from typing import Any, Dict, Tuple, Type, TypeVar
 
 import numpy as np
+import pyspark
 import pytest
 from _pytest.logging import LogCaptureFixture
+from packaging import version
+
+if version.parse(pyspark.__version__) < version.parse("3.4.0"):
+    from pyspark.sql.utils import IllegalArgumentException  # type: ignore
+else:
+    from pyspark.errors import IllegalArgumentException  # type: ignore
+
 from pyspark.ml.feature import PCA as SparkPCA
 from pyspark.ml.feature import PCAModel as SparkPCAModel
 from pyspark.ml.functions import array_to_vector
@@ -156,7 +164,7 @@ def test_pca_params(gpu_number: int, tmp_path: str, caplog: LogCaptureFixture) -
     assert_params(default_pca, default_spark_params, default_cuml_params)
 
     # Spark Params constructor
-    spark_params = {"k": 2}
+    spark_params: Dict[str, Any] = {"k": 2}
     spark_pca = PCA(**spark_params)
     expected_spark_params = default_spark_params.copy()
     expected_spark_params.update(spark_params)  # type: ignore
@@ -165,7 +173,7 @@ def test_pca_params(gpu_number: int, tmp_path: str, caplog: LogCaptureFixture) -
     assert_params(spark_pca, expected_spark_params, expected_cuml_params)
 
     # cuml_params constructor
-    cuml_params = {
+    cuml_params: Dict[str, Any] = {
         "n_components": 5,
         "num_workers": 5,
         "svd_solver": "jacobi",
@@ -187,7 +195,7 @@ def test_pca_params(gpu_number: int, tmp_path: str, caplog: LogCaptureFixture) -
     assert_params(custom_pca_loaded, expected_spark_params, expected_cuml_params)
 
     # Conflicting params
-    conflicting_params = {
+    conflicting_params: Dict[str, Any] = {
         "k": 1,
         "n_components": 2,
     }
@@ -410,3 +418,21 @@ def test_pca_spark_compat(
         assert loadedModel.pc == model.pc
         assert loadedModel.explainedVariance == model.explainedVariance
         assert loadedModel.transform(df).take(1) == model.transform(df).take(1)
+
+
+def test_parameters_validation() -> None:
+    data = [
+        ([1.0, 2.0], 1.0),
+        ([3.0, 1.0], 0.0),
+    ]
+
+    with CleanSparkSession() as spark:
+        features_col = "features"
+        label_col = "label"
+        schema = features_col + " array<float>, " + label_col + " float"
+        df = spark.createDataFrame(data, schema=schema)
+        with pytest.raises(IllegalArgumentException, match="k given invalid value -1"):
+            PCA(k=-1).fit(df)
+
+        with pytest.raises(IllegalArgumentException, match="k given invalid value -1"):
+            PCA().setK(-1).fit(df)

@@ -15,17 +15,29 @@
 #
 import json
 import math
-from typing import Any, Dict, List, Tuple, Type, TypeVar, Union, cast
+from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union, cast
 
 import numpy as np
+import pyspark
 import pytest
 from _pytest.logging import LogCaptureFixture
 from cuml import accuracy_score
+from packaging import version
+
+if version.parse(pyspark.__version__) < version.parse("3.4.0"):
+    from pyspark.sql.utils import IllegalArgumentException  # type: ignore
+else:
+    from pyspark.errors import IllegalArgumentException  # type: ignore
+
 from pyspark.ml.classification import (
     RandomForestClassificationModel as SparkRFClassificationModel,
 )
 from pyspark.ml.classification import RandomForestClassifier as SparkRFClassifier
-from pyspark.ml.evaluation import MulticlassClassificationEvaluator, RegressionEvaluator
+from pyspark.ml.evaluation import (
+    BinaryClassificationEvaluator,
+    MulticlassClassificationEvaluator,
+    RegressionEvaluator,
+)
 from pyspark.ml.linalg import Vectors
 from pyspark.ml.param import Param
 from pyspark.ml.regression import RandomForestRegressionModel as SparkRFRegressionModel
@@ -598,17 +610,16 @@ def test_random_forest_classifier_spark_compat(
             if isinstance(model, SparkRFClassificationModel):
                 assert result.prediction == 0.0
                 assert np.argmax(result.probability) == 0
+                assert np.argmax(result.newRawPrediction) == 0
             else:
                 # TODO: investigate difference
                 assert result.prediction == 1.0
                 assert np.argmax(result.probability) == 1
+                assert np.argmax(result.newRawPrediction) == 1
 
         if isinstance(model, SparkRFClassificationModel):
-            assert np.argmax(result.newRawPrediction) == 0
             assert result.leafId == Vectors.dense([0.0, 0.0, 0.0])
         else:
-            with pytest.raises((NotImplementedError, AttributeError)):
-                assert np.argmax(result.newRawPrediction) == 0
             with pytest.raises((NotImplementedError, AttributeError)):
                 assert result.leafId == Vectors.dense([0.0, 0.0, 0.0])
 
@@ -816,20 +827,27 @@ def test_fit_multiple_in_single_pass(
 @pytest.mark.parametrize(
     "estimator_evaluator",
     [
-        (RandomForestClassifier, MulticlassClassificationEvaluator),
-        (RandomForestRegressor, RegressionEvaluator),
+        (RandomForestClassifier, 4, MulticlassClassificationEvaluator, "accuracy"),
+        (RandomForestClassifier, 4, MulticlassClassificationEvaluator, "logLoss"),
+        (RandomForestClassifier, 2, BinaryClassificationEvaluator, "areaUnderROC"),
+        (RandomForestRegressor, None, RegressionEvaluator, None),
     ],
 )
 @pytest.mark.parametrize("feature_type", [feature_types.vector])
 @pytest.mark.parametrize("data_type", [np.float32])
 @pytest.mark.parametrize("data_shape", [(100, 8)], ids=idfn)
 def test_crossvalidator_random_forest(
-    estimator_evaluator: Tuple[RandomForest, RandomForestEvaluator],
+    estimator_evaluator: Tuple[
+        RandomForest,
+        Optional[int],
+        RandomForestEvaluator,
+        Optional[str],
+    ],
     feature_type: str,
     data_type: np.dtype,
     data_shape: Tuple[int, int],
 ) -> None:
-    RF, Evaluator = estimator_evaluator
+    RF, n_classes, Evaluator, metric = estimator_evaluator
 
     # Train a toy model
 
@@ -838,7 +856,7 @@ def test_crossvalidator_random_forest(
             datatype=data_type,
             nrows=data_shape[0],
             ncols=data_shape[1],
-            n_classes=4,
+            n_classes=n_classes,
             n_informative=data_shape[1],
             n_redundant=0,
             n_repeated=0,
@@ -862,6 +880,9 @@ def test_crossvalidator_random_forest(
 
         evaluator = Evaluator()
         evaluator.setLabelCol(label_col)
+
+        if metric:
+            evaluator.setMetricName(metric)  # type: ignore
 
         grid = (
             ParamGridBuilder()
@@ -891,3 +912,25 @@ def test_crossvalidator_random_forest(
         spark_cv_model = spark_cv.fit(df)
 
         assert array_equal(model.avgMetrics, spark_cv_model.avgMetrics)
+
+
+def test_parameters_validation() -> None:
+    data = [
+        ([1.0, 2.0], 1.0),
+        ([3.0, 1.0], 0.0),
+    ]
+
+    with CleanSparkSession() as spark:
+        features_col = "features"
+        label_col = "label"
+        schema = features_col + " array<float>, " + label_col + " float"
+        df = spark.createDataFrame(data, schema=schema)
+        with pytest.raises(
+            IllegalArgumentException, match="maxDepth given invalid value -1"
+        ):
+            RandomForestClassifier(maxDepth=-1).fit(df)
+
+        with pytest.raises(
+            IllegalArgumentException, match="maxBins given invalid value -1"
+        ):
+            RandomForestRegressor().setMaxBins(-1).fit(df)

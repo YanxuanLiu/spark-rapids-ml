@@ -42,7 +42,7 @@ local_threads=${local_threads:-4}
 num_gpus=1
 if [[ $cluster_type == "gpu" || $cluster_type == "gpu_etl" ]]; then
     num_cpus=0
-    if [ -n $CUDA_VISIBLE_DEVICES ]; then
+    if [[ -n $CUDA_VISIBLE_DEVICES ]]; then
         num_gpus=$(( `echo $CUDA_VISIBLE_DEVICES | grep -o ',' | wc -l` + 1 ))
     fi
 elif [[ $cluster_type == "cpu" ]]; then
@@ -99,7 +99,7 @@ EOF
 
 if [[ $cluster_type == "gpu_etl" ]]
 then
-SPARK_RAPIDS_VERSION=23.08.2
+SPARK_RAPIDS_VERSION=23.10.0
 rapids_jar=${rapids_jar:-rapids-4-spark_2.12-$SPARK_RAPIDS_VERSION.jar}
 if [ ! -f $rapids_jar ]; then
     echo "downloading spark rapids jar"

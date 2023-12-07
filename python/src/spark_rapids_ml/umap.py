@@ -16,6 +16,7 @@
 
 import json
 import os
+from abc import ABCMeta
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -70,8 +71,8 @@ from .core import (
     _TransformFunc,
     alias,
     param_alias,
-    transform_evaluate,
 )
+from .metrics import EvalMetricInfo
 from .params import HasFeaturesCols, P, _CumlClass, _CumlParams
 from .utils import (
     _ArrayOrder,
@@ -112,6 +113,9 @@ class UMAPClass(_CumlClass):
             "random_state": None,
             "verbose": False,
         }
+
+    def _pyspark_class(self) -> Optional[ABCMeta]:
+        return None
 
 
 class _UMAPCumlParams(
@@ -710,13 +714,10 @@ class UMAP(UMAPClass, _CumlEstimatorSupervised, _UMAPCumlParams):
         datasets must be subsampled to fit within the node's memory and execute in a reasonable time. Smaller fractions
         will result in faster training, but may result in sub-optimal embeddings.
 
-    featuresCol: str
-        The name of the column that contains input vectors. featuresCol should be set when input vectors are stored
-        in a single column of a dataframe.
-
-    featuresCols: List[str]
-        The names of the columns that contain input vectors. featuresCols should be set when input vectors are stored
-        in multiple columns of a dataframe.
+    featuresCol: str or List[str]
+        The feature column names, spark-rapids-ml supports vector, array and columnar as the input.\n
+            * When the value is a string, the feature columns must be assembled into 1 column with vector or array type.
+            * When the value is a list of strings, the feature columns must be numeric types.
 
     labelCol: str (optional)
         The name of the column that contains labels. If provided, supervised fitting will be performed, where labels
@@ -724,6 +725,11 @@ class UMAP(UMAPClass, _CumlEstimatorSupervised, _UMAPCumlParams):
 
     outputCol: str (optional)
         The name of the column that contains embeddings. If not provided, the default name of "embedding" will be used.
+
+    num_workers:
+        Number of cuML workers, where each cuML worker corresponds to one Spark task
+        running on one GPU. If not set, spark-rapids-ml tries to infer the number of
+        cuML workers (i.e. GPUs in cluster) from the Spark environment.
 
     Examples
     --------
@@ -776,14 +782,42 @@ class UMAP(UMAPClass, _CumlEstimatorSupervised, _UMAPCumlParams):
 
     """
 
-    def __init__(self, **kwargs: Any) -> None:
+    @pyspark.keyword_only
+    def __init__(
+        self,
+        *,
+        n_neighbors: Optional[float] = 15,
+        n_components: Optional[int] = 15,
+        metric: str = "euclidean",
+        n_epochs: Optional[int] = None,
+        learning_rate: Optional[float] = 1.0,
+        init: Optional[str] = "spectral",
+        min_dist: Optional[float] = 0.1,
+        spread: Optional[float] = 1.0,
+        set_op_mix_ratio: Optional[float] = 1.0,
+        local_connectivity: Optional[float] = 1.0,
+        repulsion_strength: Optional[float] = 1.0,
+        negative_sample_rate: Optional[int] = 5,
+        transform_queue_size: Optional[float] = 1.0,
+        a: Optional[float] = None,
+        b: Optional[float] = None,
+        precomputed_knn: Optional[List[List[float]]] = None,
+        random_state: Optional[int] = None,
+        sample_fraction: Optional[float] = 1.0,
+        featuresCol: Optional[Union[str, List[str]]] = None,
+        labelCol: Optional[str] = None,
+        outputCol: Optional[str] = None,
+        num_workers: Optional[int] = None,
+        verbose: Union[int, bool] = False,
+        **kwargs: Any,
+    ) -> None:
         super().__init__()
-        if not kwargs.get("float32_inputs", True):
+        if not self._input_kwargs.get("float32_inputs", True):
             get_logger(self.__class__).warning(
                 "This estimator does not support double precision inputs. Setting float32_inputs to False will be ignored."
             )
-            kwargs.pop("float32_inputs")
-        self._set_params(**kwargs)
+            self._input_kwargs.pop("float32_inputs")
+        self._set_params(**self._input_kwargs)
         max_records_per_batch_str = _get_spark_session().conf.get(
             "spark.sql.execution.arrow.maxRecordsPerBatch", "10000"
         )
@@ -1111,7 +1145,7 @@ class UMAPModel(_CumlModel, UMAPClass, _UMAPCumlParams):
         return res
 
     def _get_cuml_transform_func(
-        self, dataset: DataFrame, category: str = transform_evaluate.transform
+        self, dataset: DataFrame, eval_metric_info: Optional[EvalMetricInfo] = None
     ) -> Tuple[_ConstructFunc, _TransformFunc, Optional[_EvaluateFunc],]:
         cuml_alg_params = self.cuml_params
         driver_embedding = self.embedding_

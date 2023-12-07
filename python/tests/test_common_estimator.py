@@ -14,12 +14,13 @@
 # limitations under the License.
 #
 
+from abc import ABCMeta
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
 import pytest
-from pyspark import Row, TaskContext
+from pyspark import Row, SparkConf, TaskContext
 from pyspark.ml.param import Param, Params, TypeConverters
 from pyspark.ml.param.shared import HasInputCols, HasOutputCols
 from pyspark.sql import DataFrame
@@ -34,8 +35,8 @@ from spark_rapids_ml.core import (
     _EvaluateFunc,
     _TransformFunc,
     param_alias,
-    transform_evaluate,
 )
+from spark_rapids_ml.metrics import EvalMetricInfo
 from spark_rapids_ml.params import _CumlClass, _CumlParams
 from spark_rapids_ml.utils import PartitionDescriptor
 
@@ -234,6 +235,9 @@ class SparkRapidsMLDummy(
         assert result.model_attribute_b == "hello dummy"
         return SparkRapidsMLDummyModel._from_row(result)
 
+    def _pyspark_class(self) -> Optional[ABCMeta]:
+        return None
+
 
 class SparkRapidsMLDummyModel(
     SparkRapidsMLDummyClass,
@@ -272,7 +276,7 @@ class SparkRapidsMLDummyModel(
         return self._set(outputCols=value)
 
     def _get_cuml_transform_func(
-        self, dataset: DataFrame, category: str = transform_evaluate.transform
+        self, dataset: DataFrame, eval_metric_info: Optional[EvalMetricInfo] = None
     ) -> Tuple[_ConstructFunc, _TransformFunc, Optional[_EvaluateFunc],]:
         model_attribute_a = self.model_attribute_a
 
@@ -517,3 +521,60 @@ def test_num_workers_validation() -> None:
             match="The num_workers \(55\) should be less than or equal to spark default parallelism",
         ):
             dummy.fit(df)
+
+
+def test_stage_level_scheduling() -> None:
+    dummy = SparkRapidsMLDummy()
+    assert dummy._skip_stage_level_scheduling("3.3.1", SparkConf())
+
+    conf = SparkConf().setMaster("yarn")
+    assert dummy._skip_stage_level_scheduling("3.4.0", conf)
+
+    # lack of executor cores/gpu configuration => skip
+    conf = SparkConf().setMaster("spark://foo")
+    assert dummy._skip_stage_level_scheduling("3.4.0", conf)
+
+    # spark.executor.cores=1 => skip
+    conf = (
+        SparkConf()
+        .setMaster("spark://foo")
+        .set("spark.executor.cores", "1")
+        .set("spark.executor.resource.gpu.amount", "1")
+    )
+    assert dummy._skip_stage_level_scheduling("3.4.0", conf)
+
+    # spark.executor.resource.gpu.amount > 1 => skip
+    conf = (
+        SparkConf()
+        .setMaster("spark://foo")
+        .set("spark.executor.cores", "12")
+        .set("spark.executor.resource.gpu.amount", "2")
+    )
+    assert dummy._skip_stage_level_scheduling("3.4.0", conf)
+
+    # executor.gpu.amount = task.gpu.amount => skip
+    conf = (
+        SparkConf()
+        .setMaster("spark://foo")
+        .set("spark.executor.cores", "12")
+        .set("spark.executor.resource.gpu.amount", "1")
+        .set("spark.task.resource.gpu.amount", "1")
+    )
+    assert dummy._skip_stage_level_scheduling("3.4.0", conf)
+
+    conf = (
+        SparkConf()
+        .setMaster("spark://foo")
+        .set("spark.executor.cores", "12")
+        .set("spark.executor.resource.gpu.amount", "1")
+    )
+    assert not dummy._skip_stage_level_scheduling("3.4.0", conf)
+
+    conf = (
+        SparkConf()
+        .setMaster("spark://foo")
+        .set("spark.executor.cores", "12")
+        .set("spark.executor.resource.gpu.amount", "1")
+        .set("spark.task.resource.gpu.amount", "0.08")
+    )
+    assert not dummy._skip_stage_level_scheduling("3.4.0", conf)

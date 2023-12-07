@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+from abc import ABCMeta
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -28,6 +29,7 @@ from typing import (
 
 import numpy as np
 import pandas as pd
+import pyspark
 from pyspark import Row, TaskContext, keyword_only
 from pyspark.ml.common import _py2java
 from pyspark.ml.evaluation import Evaluator, RegressionEvaluator
@@ -62,8 +64,8 @@ from .core import (
     alias,
     param_alias,
     pred,
-    transform_evaluate,
 )
+from .metrics import EvalMetricInfo, transform_evaluate_metric
 from .metrics.RegressionMetrics import RegressionMetrics, reg_metrics
 from .params import HasFeaturesCols, P, _CumlClass, _CumlParams
 from .tree import (
@@ -129,7 +131,11 @@ class _RegressionModelEvaluationMixIn:
             ]
         )
 
-        rows = self._this_model._transform_evaluate_internal(dataset, schema).collect()
+        rows = self._this_model._transform_evaluate_internal(
+            dataset,
+            schema,
+            EvalMetricInfo(eval_metric=transform_evaluate_metric.regression),
+        ).collect()
 
         metrics = RegressionMetrics._from_rows(num_models, rows)
         return [metric.evaluate(evaluator) for metric in metrics]
@@ -214,6 +220,9 @@ class LinearRegressionClass(_CumlClass):
             "shuffle": True,
         }
 
+    def _pyspark_class(self) -> Optional[ABCMeta]:
+        return pyspark.ml.regression.LinearRegression
+
 
 class _LinearRegressionCumlParams(
     _CumlParams, _LinearRegressionParams, HasFeaturesCols
@@ -297,7 +306,7 @@ class LinearRegression(
     Parameters
     ----------
 
-    featuresCol:
+    featuresCol: str or List[str]
         The feature column names, spark-rapids-ml supports vector, array and columnar as the input.\n
             * When the value is a string, the feature columns must be assembled into 1 column with vector or array type.
             * When the value is a list of strings, the feature columns must be numeric types.
@@ -698,7 +707,7 @@ class LinearRegressionModel(
         return self.cpu().evaluate(dataset)
 
     def _get_cuml_transform_func(
-        self, dataset: DataFrame, category: str = transform_evaluate.transform
+        self, dataset: DataFrame, eval_metric_info: Optional[EvalMetricInfo] = None
     ) -> Tuple[_ConstructFunc, _TransformFunc, Optional[_EvaluateFunc],]:
         coef_ = self.coef_
         intercept_ = self.intercept_
@@ -779,6 +788,9 @@ class _RandomForestRegressorClass(_RandomForestClass):
         )
         return mapping
 
+    def _pyspark_class(self) -> Optional[ABCMeta]:
+        return pyspark.ml.regression.RandomForestRegressor
+
 
 class RandomForestRegressor(
     _RandomForestRegressorClass,
@@ -809,7 +821,7 @@ class RandomForestRegressor(
     Parameters
     ----------
 
-    featuresCol:
+    featuresCol: str or List[str]
         The feature column names, spark-rapids-ml supports vector, array and columnar as the input.\n
             * When the value is a string, the feature columns must be assembled into 1 column with vector or array type.
             * When the value is a list of strings, the feature columns must be numeric types.
@@ -1006,9 +1018,11 @@ class RandomForestRegressionModel(
         return False
 
     def _get_cuml_transform_func(
-        self, dataset: DataFrame, category: str = transform_evaluate.transform
+        self, dataset: DataFrame, eval_metric_info: Optional[EvalMetricInfo] = None
     ) -> Tuple[_ConstructFunc, _TransformFunc, Optional[_EvaluateFunc],]:
-        _construct_rf, _predict, _ = super()._get_cuml_transform_func(dataset, category)
+        _construct_rf, _predict, _ = super()._get_cuml_transform_func(
+            dataset, eval_metric_info
+        )
         return _construct_rf, _predict, self._calculate_regression_metrics
 
     def _transformEvaluate(
