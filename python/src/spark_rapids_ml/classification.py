@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2023, NVIDIA CORPORATION.
+# Copyright (c) 2024, NVIDIA CORPORATION.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -41,6 +41,7 @@ if TYPE_CHECKING:
 
 import numpy as np
 import pandas as pd
+import scipy
 from pyspark import Row, TaskContext, keyword_only
 from pyspark.ml.classification import BinaryRandomForestClassificationSummary
 from pyspark.ml.classification import (
@@ -86,7 +87,7 @@ from .core import (
     param_alias,
     pred,
 )
-from .params import HasFeaturesCols, _CumlClass, _CumlParams
+from .params import HasEnableSparseDataOptim, HasFeaturesCols, _CumlClass, _CumlParams
 from .tree import (
     _RandomForestClass,
     _RandomForestCumlParams,
@@ -613,7 +614,11 @@ class RandomForestClassificationModel(
 
     def _get_cuml_transform_func(
         self, dataset: DataFrame, eval_metric_info: Optional[EvalMetricInfo] = None
-    ) -> Tuple[_ConstructFunc, _TransformFunc, Optional[_EvaluateFunc],]:
+    ) -> Tuple[
+        _ConstructFunc,
+        _TransformFunc,
+        Optional[_EvaluateFunc],
+    ]:
         _construct_rf, _, _ = super()._get_cuml_transform_func(dataset)
 
         def _predict(rf: CumlT, pdf: TransformInputType) -> pd.Series:
@@ -654,7 +659,7 @@ class LogisticRegressionClass(_CumlClass):
             "fitIntercept": "fit_intercept",
             "threshold": None,
             "thresholds": None,
-            "standardization": "",  # Set to "" instead of None because cuml defaults to standardization = False
+            "standardization": "standardization",
             "weightCol": None,
             "aggregationDepth": None,
             "family": "",  # family can be 'auto', 'binomial' or 'multinomial', cuml automatically detects num_classes
@@ -674,6 +679,7 @@ class LogisticRegressionClass(_CumlClass):
     def _get_cuml_params_default(self) -> Dict[str, Any]:
         return {
             "fit_intercept": True,
+            "standardization": False,
             "verbose": False,
             "C": 1.0,
             "penalty": "l2",
@@ -716,6 +722,7 @@ class LogisticRegressionClass(_CumlClass):
 class _LogisticRegressionCumlParams(
     _CumlParams,
     _LogisticRegressionParams,
+    HasEnableSparseDataOptim,
     HasFeaturesCols,
     HasProbabilityCol,
     HasRawPredictionCol,
@@ -833,8 +840,18 @@ class LogisticRegression(
         the penalty is an L2 penalty. For alpha = 1, it is an L1 penalty.
     tol:
         The convergence tolerance.
+    enable_sparse_data_optim: None or boolean, optional (default=None)
+        If features column is VectorUDT type, Spark rapids ml relies on this parameter to decide whether to use dense array or sparse array in cuml.
+        If None, use dense array if the first VectorUDT of a dataframe is DenseVector. Use sparse array if it is SparseVector.
+        If False, always uses dense array. This is favorable if the majority of VectorUDT vectors are DenseVector.
+        If True, always uses sparse array. This is favorable if the majority of the VectorUDT vectors are SparseVector.
+        Note this is only supported in spark >= 3.4.
     fitIntercept:
         Whether to fit an intercept term.
+    standardization:
+        Whether to standardize the training data. If true, spark rapids ml sets enable_sparse_data_optim=False
+        to densify sparse vectors into dense vectors for fitting. Currently there is no support for sparse vectors
+        standardization in cuml yet.
     num_workers:
         Number of cuML workers, where each cuML worker corresponds to one Spark task
         running on one GPU. If not set, spark-rapids-ml tries to infer the number of
@@ -896,6 +913,8 @@ class LogisticRegression(
         elasticNetParam: float = 0.0,
         tol: float = 1e-6,
         fitIntercept: bool = True,
+        standardization: bool = True,
+        enable_sparse_data_optim: Optional[bool] = None,
         num_workers: Optional[int] = None,
         verbose: Union[int, bool] = False,
         **kwargs: Any,
@@ -905,6 +924,7 @@ class LogisticRegression(
                 "This estimator does not support double precision inputs. Setting float32_inputs to False will be ignored."
             )
             self._input_kwargs.pop("float32_inputs")
+
         super().__init__()
         self._set_cuml_reg_params()
         self._set_params(**self._input_kwargs)
@@ -916,30 +936,111 @@ class LogisticRegression(
         self,
         dataset: DataFrame,
         extra_params: Optional[List[Dict[str, Any]]] = None,
-    ) -> Callable[[FitInputType, Dict[str, Any]], Dict[str, Any],]:
+    ) -> Callable[
+        [FitInputType, Dict[str, Any]],
+        Dict[str, Any],
+    ]:
         array_order = self._fit_array_order()
+        standardization = self.getStandardization()
+        fit_intercept = self.getFitIntercept()
+
+        logger = get_logger(self.__class__)
+        if (
+            self.getStandardization() is True
+            and self.getOrDefault("enable_sparse_data_optim") is not False
+        ):
+            logger.warning(
+                (
+                    "when standardization is True, spark rapids ml forces densifying sparse vectors to dense vectors for training."
+                )
+            )
 
         def _logistic_regression_fit(
             dfs: FitInputType,
             params: Dict[str, Any],
         ) -> Dict[str, Any]:
+            import cupyx
             from cuml.linear_model.logistic_regression_mg import LogisticRegressionMG
 
             X_list = [x for (x, _, _) in dfs]
             y_list = [y for (_, y, _) in dfs]
+
             if isinstance(X_list[0], pd.DataFrame):
                 concated = pd.concat(X_list)
                 concated_y = pd.concat(y_list)
             else:
-                # features are either cp or np arrays here
+                # features are either cp, np, scipy csr or cupyx csr arrays here
                 concated = _concat_and_free(X_list, order=array_order)
                 concated_y = _concat_and_free(y_list, order=array_order)
 
-            pdesc = PartitionDescriptor.build(
-                [concated.shape[0]], params[param_alias.num_cols]
+            is_sparse = isinstance(concated, scipy.sparse.csr_matrix) or isinstance(
+                concated, cupyx.scipy.sparse.csr_matrix
             )
 
+            # densifying sparse vectors into dense to use standardization
+            if standardization is True and is_sparse is True:
+                concated = concated.toarray()
+
+            pdesc = PartitionDescriptor.build(
+                [concated.shape[0]],
+                params[param_alias.num_cols],
+            )
+
+            # Use cupy to standardize dataset as a workaround to gain better numeric stability
+            standarization_with_cupy = standardization
+            if standarization_with_cupy is True:
+                import cupy as cp
+
+                if isinstance(concated, np.ndarray):
+                    concated = cp.array(concated)
+                elif isinstance(concated, pd.DataFrame):
+                    concated = cp.array(concated.values)
+                else:
+                    assert isinstance(
+                        concated, cp.ndarray
+                    ), "only numpy array, cupy array, and pandas dataframe are supported when standardization_with_cupy is on"
+
+                mean_partial = concated.sum(axis=0) / pdesc.m
+
+                import json
+
+                from pyspark import BarrierTaskContext
+
+                context = BarrierTaskContext.get()
+
+                def all_gather_then_sum(
+                    cp_array: cp.ndarray, dtype: Union[np.float32, np.float64]
+                ) -> cp.ndarray:
+                    msgs = context.allGather(json.dumps(cp_array.tolist()))
+                    arrays = [json.loads(p) for p in msgs]
+                    array_sum = np.sum(arrays, axis=0).astype(dtype)
+                    return cp.array(array_sum)
+
+                mean = all_gather_then_sum(mean_partial, concated.dtype)
+                concated -= mean
+
+                l2 = cp.linalg.norm(concated, ord=2, axis=0)
+
+                var_partial = l2 * l2 / (pdesc.m - 1)
+                var = all_gather_then_sum(var_partial, concated.dtype)
+
+                assert cp.all(
+                    var >= 0
+                ), "numeric instable detected when calculating variance. Got negative variance"
+
+                stddev = cp.sqrt(var)
+
+                stddev_inv = cp.where(stddev != 0, 1.0 / stddev, 1.0)
+
+                if fit_intercept is False:
+                    concated += mean
+
+                concated *= stddev_inv
+
             def _single_fit(init_parameters: Dict[str, Any]) -> Dict[str, Any]:
+                if standarization_with_cupy is True:
+                    init_parameters["standardization"] = False
+
                 if init_parameters["C"] == 0.0:
                     init_parameters["penalty"] = "none"
 
@@ -968,14 +1069,68 @@ class LogisticRegression(
                     pdesc.rank,
                 )
 
+                coef_ = logistic_regression.coef_
+                intercept_ = logistic_regression.intercept_
+                if standarization_with_cupy is True:
+                    import cupy as cp
+
+                    coef_ = cp.where(stddev > 0, coef_ / stddev, coef_)
+                    if init_parameters["fit_intercept"] is True:
+                        intercept_ = intercept_ - cp.dot(coef_, mean)
+
+                intercept_array = intercept_
+                # follow Spark to center the intercepts for multinomial classification
+                if (
+                    init_parameters["fit_intercept"] is True
+                    and len(intercept_array) > 1
+                ):
+                    import cupy as cp
+
+                    intercept_mean = (
+                        np.mean(intercept_array)
+                        if isinstance(intercept_array, np.ndarray)
+                        else cp.mean(intercept_array)
+                    )
+                    intercept_array -= intercept_mean
+
+                n_cols = logistic_regression.n_cols
+
                 model = {
-                    "coef_": logistic_regression.coef_.tolist(),
-                    "intercept_": logistic_regression.intercept_.tolist(),
+                    "coef_": coef_[:, :n_cols].tolist(),
+                    "intercept_": intercept_.tolist(),
                     "classes_": logistic_regression.classes_.tolist(),
-                    "n_cols": logistic_regression.n_cols,
+                    "n_cols": n_cols,
                     "dtype": logistic_regression.dtype.name,
                     "num_iters": logistic_regression.solver_model.num_iters,
+                    "objective": logistic_regression.solver_model.objective,
                 }
+
+                # check if invalid label exists
+                for class_val in model["classes_"]:
+                    if class_val < 0:
+                        raise RuntimeError(
+                            f"Labels MUST be in [0, 2147483647), but got {class_val}"
+                        )
+                    elif not class_val.is_integer():
+                        raise RuntimeError(
+                            f"Labels MUST be Integers, but got {class_val}"
+                        )
+
+                if len(logistic_regression.classes_) == 1:
+                    class_val = logistic_regression.classes_[0]
+                    # TODO: match Spark to use max(class_list) to calculate the number of classes
+                    # Cuml currently uses unique(class_list)
+                    if class_val != 1.0 and class_val != 0.0:
+                        raise RuntimeError(
+                            "class value must be either 1. or 0. when dataset has one label"
+                        )
+
+                    if init_parameters["fit_intercept"] is True:
+                        model["coef_"] = [[0.0] * n_cols]
+                        model["intercept_"] = [
+                            float("inf") if class_val == 1.0 else float("-inf")
+                        ]
+
                 del logistic_regression
                 return model
 
@@ -1023,10 +1178,22 @@ class LogisticRegression(
                 StructField("n_cols", IntegerType(), False),
                 StructField("dtype", StringType(), False),
                 StructField("num_iters", IntegerType(), False),
+                StructField("objective", DoubleType(), False),
             ]
         )
 
     def _create_pyspark_model(self, result: Row) -> "LogisticRegressionModel":
+        logger = get_logger(self.__class__)
+        if len(result["classes_"]) == 1:
+            if self.getFitIntercept() is False:
+                logger.warning(
+                    "All labels belong to a single class and fitIntercept=false. It's a dangerous ground, so the algorithm may not converge."
+                )
+            else:
+                logger.warning(
+                    "All labels are the same value and fitIntercept=true, so the coefficients will be zeros. Training is not needed."
+                )
+
         return LogisticRegressionModel._from_row(result)
 
     def _set_cuml_reg_params(self) -> "LogisticRegression":
@@ -1104,6 +1271,7 @@ class LogisticRegressionModel(
         n_cols: int,
         dtype: str,
         num_iters: int,
+        objective: float,
     ) -> None:
         super().__init__(
             dtype=dtype,
@@ -1112,6 +1280,7 @@ class LogisticRegressionModel(
             intercept_=intercept_,
             classes_=classes_,
             num_iters=num_iters,
+            objective=objective,
         )
         self.coef_ = coef_
         self.intercept_ = intercept_
@@ -1119,6 +1288,7 @@ class LogisticRegressionModel(
         self._lr_spark_model: Optional[SparkLogisticRegressionModel] = None
         self._num_classes = len(self.classes_)
         self.num_iters = num_iters
+        self.objective = objective
         self._this_model = self
 
     def cpu(self) -> SparkLogisticRegressionModel:
@@ -1223,7 +1393,11 @@ class LogisticRegressionModel(
 
     def _get_cuml_transform_func(
         self, dataset: DataFrame, eval_metric_info: Optional[EvalMetricInfo] = None
-    ) -> Tuple[_ConstructFunc, _TransformFunc, Optional[_EvaluateFunc],]:
+    ) -> Tuple[
+        _ConstructFunc,
+        _TransformFunc,
+        Optional[_EvaluateFunc],
+    ]:
         coef_ = self.coef_
         intercept_ = self.intercept_
         classes_ = self.classes_
