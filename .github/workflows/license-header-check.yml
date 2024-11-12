@@ -31,7 +31,7 @@ jobs:
         run: |
           base_sha=${{ github.event.pull_request.base.sha }}
           head_sha=${{ github.event.pull_request.head.sha }}
-          changed_files=$(git diff $base_sha $head_sha)
+          changed_files=$(git diff --name-only $base_sha $head_sha)
           IFS=$'\n' read -d '' -r -a changed_files_array <<< "$changed_files"
 
       - name: license-header-check
