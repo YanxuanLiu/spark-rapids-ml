@@ -26,18 +26,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Get changed files
-        id: getChangedFiles
-        run: |
-          git fetch origin ${{ github.event.pull_request.base.sha }}: ${{ github.event.pull_request.base.ref }}
-          git fetch origin ${{ github.event.pull_request.head.sha }}: ${{ github.event.pull_request.head.ref }}
-          changed_files=$(git diff --name-only ${{ github.event.pull_request.base.ref }} ${{ github.event.pull_request.head.ref }})
-          IFS=$'\n' read -d '' -r -a changed_files_array <<< "$changed_files"
-
       - name: license-header-check
         uses: YanxuanLiu/spark-rapids-common/license-header-check@license-header-check
         with:
-          files: $changed_files_array
+          repo: ${{ github.repository }}
+          pull_number: ${{ github.event.number }}
           excludes: |
             *.md
             LICENSE
