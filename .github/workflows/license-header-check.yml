@@ -25,15 +25,13 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Get changed files
         id: getChangedFiles
         run: |
-          base_sha=${{ github.event.pull_request.base.sha }}
-          head_sha=${{ github.event.pull_request.head.sha }}
-          changed_files=$(git diff --name-only $base_sha $head_sha)
+          git fetch origin ${{ github.event.pull_request.base.sha }}: ${{ github.event.pull_request.base.ref }}
+          git fetch origin ${{ github.event.pull_request.head.sha }}: ${{ github.event.pull_request.head.ref }}
+          changed_files=$(git diff --name-only ${{ github.event.pull_request.base.ref }} ${{ github.event.pull_request.head.ref }})
           IFS=$'\n' read -d '' -r -a changed_files_array <<< "$changed_files"
 
       - name: license-header-check
