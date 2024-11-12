@@ -33,4 +33,10 @@ jobs:
           repo: ${{ github.event.repository.name }}
           pull_number: ${{ github.event.number }}
           token: ${{ secrets.GITHUB_TOKEN }}
-            
+          excludes: |
+            NOTICE
+            LICENSE*
+            *.md
+            *.cfg
+            *.toml
+            *.json
