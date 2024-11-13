@@ -60,7 +60,7 @@ jobs:
           NO_LICENSE_FILES=()
           for FILE in $FILES; do
               echo "Checking $FILE"
-              if !(grep -E "$LICENSE_PATTERN" "ci/$FILE"); then
+              if !(grep -E "$LICENSE_PATTERN" "$FILE"); then
                   NO_LICENSE_FILES+=($FILE)
               fi
           done
