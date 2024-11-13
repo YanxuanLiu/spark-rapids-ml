@@ -39,20 +39,33 @@ jobs:
       #       *.toml
       #       *.json
 
-      - name: Get changed files
+      - name: License header check
         shell: bash
         run: |
-          CURRENT_YEAR=$(date +%Y)
-          exclude_patterns="NOTICE\nLICENSE*\n*.md"
-          LICENSE_PATTERN="Copyright \(c\) .*?${CURRENT_YEAR}, NVIDIA CORPORATION."
-          FILES=$(git diff --name-only ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }})
-          IFS="\n" read -r -a EXCLUDE_PATTERNS <<< $exclude_patterns
+          file_patterns="*.md,  *.py,*.sh"
 
-          for FILE in $FILES; do
-            if echo "$FILE" | grep -E "$EXCLUDE_PATTERNS"; then
-              continue
-            fi
-            if [[ grep -E $LICENSE_PATTERN $FILE ]]; then
-              echo "Missing or incorrect license header in $FILE"
-            fi
+          CURRENT_YEAR=$(date +%Y)
+          LICENSE_PATTERN="Copyright \(c\) .*?${CURRENT_YEAR}, NVIDIA CORPORATION."
+          
+          IFS="," read -r -a FILE_PATTERN_ARRAY <<< $file_patterns
+          PATTERNS=""
+          for PATTERN in "${FILE_PATTERN_ARRAY[@]}"; do
+              PATTERNS+="$(echo "$PATTERN" | xargs -I{} echo "{}")|"
           done
+          PATTERNS=${PATTERNS%|}
+
+          FILES=$(git diff --name-only ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }})          echo "$FILES"
+          FILES=$(echo "$FILES" | grep -E "$PATTERNS")
+
+          NO_LICENSE_FILES=()
+          for FILE in $FILES; do
+              echo "Checking $FILE"
+              if !(grep -E "$LICENSE_PATTERN" "ci/$FILE"); then
+                  NO_LICENSE_FILES+=($FILE)
+              fi
+          done
+
+          if [ ! -z "${NO_LICENSE_FILES[@]}" ]; then
+              echo "Following files missed copyright/license header: ${NO_LICENSE_FILES[*]}"
+              exit 1
+          fi
