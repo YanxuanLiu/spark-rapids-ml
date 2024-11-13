@@ -38,3 +38,20 @@ jobs:
             *.cfg
             *.toml
             *.json
+
+      - name: Get changed files
+        shell: bash
+        run: |
+          CURRENT_YEAR=$(date +%Y)
+          LICENSE_PATTERN="Copyright \(c\) .*?${CURRENT_YEAR}, NVIDIA CORPORATION."
+          FILES=$(git diff --name-only ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }})
+          IFS="\n" read -r -a EXCLUDE_PATTERNS <<< ${{ inputs.exclude_patterns }}
+
+          for FILE in $FILES; do
+            if echo "$FILE" | grep -E "$EXCLUDE_PATTERNS"; then
+              continue
+            fi
+            if [[ grep -E $LICENSE_PATTERN $FILE ]]; then
+              echo "Missing or incorrect license header in $FILE"
+            fi
+          done
