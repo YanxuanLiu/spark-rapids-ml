@@ -1,6 +1,7 @@
 #! /bin/bash -e
 
 
+
 unset SPARK_HOME
 
 python ../ci/lint_python.py --format --type-check || exit 1
