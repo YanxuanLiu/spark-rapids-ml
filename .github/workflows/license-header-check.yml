@@ -29,7 +29,7 @@ jobs:
       - name: license-header-check
         uses: YanxuanLiu/spark-rapids-common/license-header-check@license-header-check
         with:
-          excludes: |
+          exclude_patterns: |
             NOTICE
             LICENSE*
             *.md
