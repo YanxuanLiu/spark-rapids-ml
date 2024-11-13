@@ -11,6 +11,7 @@ This directory contains shell scripts for running larger-scale benchmarks on an 
   export S3_BUCKET=<your_s3_bucket_name>
   aws s3 mb s3://${S3_BUCKET}
   ```
+  
 
 - Upload the benchmarking files to your S3 bucket:
   ```
