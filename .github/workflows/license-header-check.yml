@@ -28,11 +28,6 @@ jobs:
         with:
           fetch-depth: 5
 
-      - name: test
-        run: |
-          echo "${{ github.event.before }} ${{ github.event.after }}"
-          echo "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
-
       - name: license-header-check
         uses: YanxuanLiu/spark-rapids-common/license-header-check@license-header-check
         with:
