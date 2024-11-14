@@ -1,6 +1,7 @@
 #!/bin/bash -ex
 set -o pipefail
 
+
 cluster_type=${1:-gpu}
 
 # configure arguments
