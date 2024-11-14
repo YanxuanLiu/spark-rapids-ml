@@ -70,4 +70,3 @@ class CleanSparkSession:
             if key not in _orig_conf_keys:
                 self.spark.conf.unset(key)
 
-
