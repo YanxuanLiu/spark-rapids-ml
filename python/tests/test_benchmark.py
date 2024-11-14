@@ -6,6 +6,7 @@ file_dir_path = os.path.dirname(file_path)
 extra_python_path = file_dir_path + "/../benchmark"
 sys.path.append(extra_python_path)
 
+
 from typing import List, Tuple
 
 import numpy as np
