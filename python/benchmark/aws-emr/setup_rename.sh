@@ -2,6 +2,8 @@
 
 # copies files to s3 bucket
 
+
+
 if [[ -z $BENCHMARK_HOME ]]; then
     echo "please export BENCHMARK_HOME per README.md"
     exit 1
@@ -26,3 +28,5 @@ pushd ${SPARK_RAPIDS_ML_HOME}/src
 zip -r - spark_rapids_ml >spark_rapids_ml.zip
 aws s3 cp spark_rapids_ml.zip s3://${BENCHMARK_HOME}/spark_rapids_ml.zip
 popd
+
+echo 'yes'
