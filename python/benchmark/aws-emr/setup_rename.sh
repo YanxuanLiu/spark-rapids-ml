@@ -6,7 +6,6 @@ if [[ -z $BENCHMARK_HOME ]]; then
     exit 1
 fi
 
-SPARK_RAPIDS_ML_HOME='../..'
 
 echo "**** copying benchmarking related files to ${BENCHMARK_HOME} ****"
 
