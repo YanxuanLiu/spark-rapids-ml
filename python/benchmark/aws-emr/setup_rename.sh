@@ -1,8 +1,5 @@
 #!/bin/bash -xe
 
-# copies files to s3 bucket
-
-
 
 if [[ -z $BENCHMARK_HOME ]]; then
     echo "please export BENCHMARK_HOME per README.md"
