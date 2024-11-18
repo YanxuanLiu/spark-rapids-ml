@@ -37,10 +37,11 @@ jobs:
             *.scala,
             *.py,
             *.sh,
-            Dockerfile*,
-            Jenkinsfile*,
+            */Dockerfile*,
+            */Jenkinsfile*,
             *.yml
-
+          excluded_file_patterns: |
+            */src/*
       # - name: License header check
       #   shell: bash
       #   run: |
