@@ -14,7 +14,7 @@
 # limitations under the License.
 #
 
-from typing import Any, Dict, List, Tuple, Type, TypeVar
+from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar
 
 import numpy as np
 import pyspark
@@ -63,14 +63,49 @@ def assert_centers_equal(
         assert a_center == pytest.approx(b_center, tolerance)
 
 
-def test_params() -> None:
+@pytest.mark.parametrize("default_params", [True, False])
+def test_params(default_params: bool) -> None:
     from cuml import KMeans as CumlKMeans
+    from pyspark.ml.clustering import KMeans as SparkKMeans
+
+    spark_params = {
+        param.name: value for param, value in SparkKMeans().extractParamMap().items()
+    }
 
     cuml_params = get_default_cuml_parameters(
-        [CumlKMeans], ["handle", "output_type", "convert_dtype"]
+        cuml_classes=[CumlKMeans], excludes=["handle", "output_type", "convert_dtype"]
     )
-    spark_params = KMeans()._get_cuml_params_default()
-    assert cuml_params == spark_params
+
+    # Ensure internal cuml defaults match actual cuml defaults
+    assert KMeans()._get_cuml_params_default() == cuml_params
+
+    # Our algorithm overrides the following cuml parameters with their spark defaults:
+    spark_default_overrides = {
+        "n_clusters": spark_params["k"],
+        "max_iter": spark_params["maxIter"],
+        "init": spark_params["initMode"],
+    }
+
+    cuml_params.update(spark_default_overrides)
+
+    if default_params:
+        kmeans = KMeans()
+        seed = kmeans.getSeed()  # get the random seed that Spark generates
+        spark_params["seed"] = seed
+        cuml_params["random_state"] = seed
+    else:
+        kmeans = KMeans(
+            k=10,
+            seed=42,
+        )
+        cuml_params["n_clusters"] = 10
+        cuml_params["random_state"] = 42
+        spark_params["k"] = 10
+        spark_params["seed"] = 42
+
+    # Ensure both Spark API params and internal cuml_params are set correctly
+    assert_params(kmeans, spark_params, cuml_params)
+    assert kmeans.cuml_params == cuml_params
 
     # setter/getter
     from .test_common_estimator import _test_input_setter_getter
@@ -146,6 +181,22 @@ def test_kmeans_params(
     kmeans_float32 = KMeans(float32_inputs=False)
     assert "float32_inputs to False" not in caplog.text
     assert not kmeans_float32._float32_inputs
+
+
+def test_kmeans_copy() -> None:
+    from .test_common_estimator import _test_est_copy
+
+    param_list: List[Tuple[Dict[str, Any], Optional[Dict[str, Any]]]] = [
+        ({"k": 17}, {"n_clusters": 17}),
+        ({"initMode": "random"}, {"init": "random"}),
+        ({"tol": 0.0132}, {"tol": 0.0132}),
+        ({"maxIter": 27}, {"max_iter": 27}),
+        ({"seed": 11}, {"random_state": 11}),
+        ({"verbose": True}, {"verbose": True}),
+    ]
+
+    for pair in param_list:
+        _test_est_copy(KMeans, pair[0], pair[1])
 
 
 def test_kmeans_basic(
@@ -368,6 +419,7 @@ def test_kmeans_spark_compat(
 
         kmeans.setSeed(1)
         kmeans.setMaxIter(10)
+        kmeans.setInitMode("k-means||")
         if isinstance(kmeans, SparkKMeans):
             kmeans.setWeightCol("weighCol")
         else:
@@ -377,6 +429,7 @@ def test_kmeans_spark_compat(
         assert kmeans.getMaxIter() == 10
         assert kmeans.getK() == 2
         assert kmeans.getSeed() == 1
+        assert kmeans.getInitMode() == "k-means||"
 
         kmeans.clear(kmeans.maxIter)
         assert kmeans.getMaxIter() == 20

@@ -14,6 +14,7 @@
 # limitations under the License.
 #
 from abc import ABCMeta
+from collections import Counter
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -226,18 +227,14 @@ class _ClassificationModelEvaluationMixIn:
         num_models = self._this_model._get_num_models()
 
         if eval_metric_info.eval_metric == transform_evaluate_metric.accuracy_like:
-            tp_by_class: List[Dict[float, float]] = [{} for _ in range(num_models)]
-            fp_by_class: List[Dict[float, float]] = [{} for _ in range(num_models)]
-            label_count_by_class: List[Dict[float, float]] = [
-                {} for _ in range(num_models)
+            # if we ever implement weights, Counter supports float values, but
+            # type checking might fail https://github.com/python/typeshed/issues/3438
+            tp_by_class: List[Counter[float]] = [Counter() for _ in range(num_models)]
+            fp_by_class: List[Counter[float]] = [Counter() for _ in range(num_models)]
+            label_count_by_class: List[Counter[float]] = [
+                Counter() for _ in range(num_models)
             ]
             label_count = [0 for _ in range(num_models)]
-
-            for i in range(num_models):
-                for j in range(self._this_model._num_classes):
-                    tp_by_class[i][float(j)] = 0.0
-                    label_count_by_class[i][float(j)] = 0.0
-                    fp_by_class[i][float(j)] = 0.0
 
             for row in rows:
                 label_count[row.model_index] += row.total
@@ -250,10 +247,16 @@ class _ClassificationModelEvaluationMixIn:
 
             scores = []
             for i in range(num_models):
+                # match spark mllib behavior in the below cases
+                for l in label_count_by_class[i]:
+                    if l not in tp_by_class[i]:
+                        tp_by_class[i][l] = 0
+                    if l not in fp_by_class[i]:
+                        fp_by_class[i][l] = 0
                 metrics = MulticlassMetrics(
-                    tp=tp_by_class[i],
-                    fp=fp_by_class[i],
-                    label=label_count_by_class[i],
+                    tp=dict(tp_by_class[i]),
+                    fp=dict(fp_by_class[i]),
+                    label=dict(label_count_by_class[i]),
                     label_count=label_count[i],
                 )
                 scores.append(metrics.evaluate(evaluator))
@@ -339,31 +342,31 @@ class RandomForestClassifier(
     Parameters
     ----------
 
-    featuresCol: str or List[str]
+    featuresCol: str or List[str] (default = "features")
         The feature column names, spark-rapids-ml supports vector, array and columnar as the input.\n
             * When the value is a string, the feature columns must be assembled into 1 column with vector or array type.
             * When the value is a list of strings, the feature columns must be numeric types.
-    labelCol:
+    labelCol: str (default = "label")
         The label column name.
-    predictionCol:
+    predictionCol: str (default = "prediction")
         The prediction column name.
-    probabilityCol:
+    probabilityCol: str (default = "probability")
         The column name for predicted class conditional probabilities.
-    rawPredictionCol:
+    rawPredictionCol: str (default = "rawPrediction")
         The column name for class raw predictions - this is currently set equal to probabilityCol values.
-    maxDepth:
+    maxDepth: int (default = 5)
         Maximum tree depth. Must be greater than 0.
-    maxBins:
+    maxBins: int (default = 32)
         Maximum number of bins used by the split algorithm per feature.
-    minInstancesPerNode:
+    minInstancesPerNode: int (default = 1)
         The minimum number of samples (rows) in each leaf node.
-    impurity: str = "gini",
+    impurity: str (default = "gini")
         The criterion used to split nodes.\n
             * ``'gini'`` for gini impurity
             * ``'entropy'`` for information gain (entropy)
-    numTrees:
+    numTrees: int (default = 20)
         Total number of trees in the forest.
-    featureSubsetStrategy:
+    featureSubsetStrategy: str (default = "auto")
         Ratio of number of features (columns) to consider per node split.\n
         The supported options:\n
             ``'auto'``:  If numTrees == 1, set to 'all', If numTrees > 1 (forest), set to 'sqrt'\n
@@ -373,9 +376,9 @@ class RandomForestClassifier(
             ``'log2'``: log2(number of features)\n
             ``'n'``: when n is in the range (0, 1.0], use n * number of features. When n
             is in the range (1, number of features), use n features.
-    seed:
+    seed: int (default = None)
         Seed for the random number generator.
-    bootstrap:
+    bootstrap: bool (default = True)
         Control bootstrapping.\n
             * If ``True``, each tree in the forest is built on a bootstrapped
               sample with replacement.
@@ -393,11 +396,11 @@ class RandomForestClassifier(
             * ``4 or False`` - Enables all messages up to and including information messages.
             * ``5 or True`` - Enables all messages up to and including debug messages.
             * ``6`` - Enables all messages up to and including trace messages.
-    n_streams:
+    n_streams: int (default = 4)
         Number of parallel streams used for forest building.
-        Please note that there is a bug running spark-rapids-ml on a node with multi-gpus
+        Please note that there could be a bug running spark-rapids-ml on a node with multi-gpus
         when n_streams > 1. See https://github.com/rapidsai/cuml/issues/5402.
-    min_samples_split:
+    min_samples_split: int or float (default = 2)
         The minimum number of samples required to split an internal node.\n
          * If type ``int``, then ``min_samples_split`` represents the minimum
            number.
@@ -405,11 +408,11 @@ class RandomForestClassifier(
            and ``ceil(min_samples_split * n_rows)`` is the minimum number of
            samples for each split.    max_samples:
         Ratio of dataset rows used while fitting each tree.
-    max_leaves:
+    max_leaves: int (default = -1)
         Maximum leaf nodes per tree. Soft constraint. Unlimited, if -1.
-    min_impurity_decrease:
+    min_impurity_decrease: float (default = 0.0)
         Minimum decrease in impurity required for node to be split.
-    max_batch_size:
+    max_batch_size: int (default = 4096)
         Maximum number of nodes that can be processed in a given batch.
 
     Examples
@@ -831,28 +834,30 @@ class LogisticRegression(
     And it will automatically map pyspark parameters
     to cuML parameters.
 
+    In the case of applying LogisticRegression on sparse vectors, Spark 3.4 or above is required.
+
     Parameters
     ----------
-    featuresCol: str or List[str]
+    featuresCol: str or List[str] (default = "features")
         The feature column names, spark-rapids-ml supports vector, array and columnar as the input.\n
             * When the value is a string, the feature columns must be assembled into 1 column with vector or array type.
             * When the value is a list of strings, the feature columns must be numeric types.
-    labelCol:
+    labelCol: (default = "label")
         The label column name.
-    predictionCol:
+    predictionCol: (default = "prediction")
         The class prediction column name.
-    probabilityCol:
+    probabilityCol: (default = "probability")
         The probability prediction column name.
-    rawPredictionCol:
+    rawPredictionCol: (default = "rawPrediction")
         The column name for class raw predictions - this is currently set equal to probabilityCol values.
-    maxIter:
+    maxIter: (default = 100)
         The maximum number of iterations of the underlying L-BFGS algorithm.
-    regParam:
+    regParam: (default = 0.0)
         The regularization parameter.
-    elasticNetParam:
+    elasticNetParam: (default = 0.0)
         The ElasticNet mixing parameter, in range [0, 1]. For alpha = 0,
         the penalty is an L2 penalty. For alpha = 1, it is an L1 penalty.
-    tol:
+    tol: (default = 1e-6)
         The convergence tolerance.
     enable_sparse_data_optim: None or boolean, optional (default=None)
         If features column is VectorUDT type, Spark rapids ml relies on this parameter to decide whether to use dense array or sparse array in cuml.
@@ -860,9 +865,9 @@ class LogisticRegression(
         If False, always uses dense array. This is favorable if the majority of VectorUDT vectors are DenseVector.
         If True, always uses sparse array. This is favorable if the majority of the VectorUDT vectors are SparseVector.
         Note this is only supported in spark >= 3.4.
-    fitIntercept:
+    fitIntercept: (default = True)
         Whether to fit an intercept term.
-    standardization:
+    standardization: (default = True)
         Whether to standardize the training data before fit.
     num_workers:
         Number of cuML workers, where each cuML worker corresponds to one Spark task
@@ -981,60 +986,7 @@ class LogisticRegression(
                 params[param_alias.num_cols],
             )
 
-            # Use cupy to standardize dataset as a workaround to gain better numeric stability
-            standarization_with_cupy = standardization and not is_sparse
-            if standarization_with_cupy is True:
-                import cupy as cp
-
-                if isinstance(concated, np.ndarray):
-                    concated = cp.array(concated)
-                elif isinstance(concated, pd.DataFrame):
-                    concated = cp.array(concated.values)
-                else:
-                    assert isinstance(
-                        concated, cp.ndarray
-                    ), "only numpy array, cupy array, and pandas dataframe are supported when standardization_with_cupy is on"
-
-                mean_partial = concated.sum(axis=0) / pdesc.m
-
-                import json
-
-                from pyspark import BarrierTaskContext
-
-                context = BarrierTaskContext.get()
-
-                def all_gather_then_sum(
-                    cp_array: cp.ndarray, dtype: Union[np.float32, np.float64]
-                ) -> cp.ndarray:
-                    msgs = context.allGather(json.dumps(cp_array.tolist()))
-                    arrays = [json.loads(p) for p in msgs]
-                    array_sum = np.sum(arrays, axis=0).astype(dtype)
-                    return cp.array(array_sum)
-
-                mean = all_gather_then_sum(mean_partial, concated.dtype)
-                concated -= mean
-
-                l2 = cp.linalg.norm(concated, ord=2, axis=0)
-
-                var_partial = l2 * l2 / (pdesc.m - 1)
-                var = all_gather_then_sum(var_partial, concated.dtype)
-
-                assert cp.all(
-                    var >= 0
-                ), "numeric instable detected when calculating variance. Got negative variance"
-
-                stddev = cp.sqrt(var)
-
-                stddev_inv = cp.where(stddev != 0, 1.0 / stddev, 1.0)
-
-                if fit_intercept is False:
-                    concated += mean
-
-                concated *= stddev_inv
-
             def _single_fit(init_parameters: Dict[str, Any]) -> Dict[str, Any]:
-                if standarization_with_cupy is True:
-                    init_parameters["standardization"] = False
 
                 if init_parameters["C"] == 0.0:
                     init_parameters["penalty"] = None
@@ -1066,13 +1018,6 @@ class LogisticRegression(
 
                 coef_ = logistic_regression.coef_
                 intercept_ = logistic_regression.intercept_
-                if standarization_with_cupy is True:
-                    import cupy as cp
-
-                    coef_ = cp.where(stddev > 0, coef_ / stddev, coef_)
-                    if init_parameters["fit_intercept"] is True:
-                        intercept_ = intercept_ - cp.dot(coef_, mean)
-
                 intercept_array = intercept_
                 # follow Spark to center the intercepts for multinomial classification
                 if (
@@ -1247,6 +1192,12 @@ class LogisticRegression(
         Sets the value of :py:attr:`fitIntercept`.
         """
         return self._set_params(fitIntercept=value)
+
+    def setStandardization(self, value: bool) -> "LogisticRegression":
+        """
+        Sets the value of :py:attr:`standardization`.
+        """
+        return self._set_params(standardization=value)
 
     def _enable_fit_multiple_in_single_pass(self) -> bool:
         return True

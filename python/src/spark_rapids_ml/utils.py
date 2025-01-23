@@ -144,6 +144,21 @@ def _get_gpu_id(task_context: TaskContext) -> int:
     return gpu_id
 
 
+def _configure_memory_resource(uvm_enabled: bool = False) -> None:
+    import cupy as cp
+    import rmm
+    from rmm.allocators.cupy import rmm_cupy_allocator
+
+    if uvm_enabled:
+        if not type(rmm.mr.get_current_device_resource()) == type(
+            rmm.mr.ManagedMemoryResource()
+        ):
+            rmm.mr.set_current_device_resource(rmm.mr.ManagedMemoryResource())
+
+        if not cp.cuda.get_allocator().__name__ == rmm_cupy_allocator.__name__:
+            cp.cuda.set_allocator(rmm_cupy_allocator)
+
+
 def _get_default_params_from_func(
     func: Callable, unsupported_set: List[str] = []
 ) -> Dict[str, Any]:
@@ -271,8 +286,12 @@ def dtype_to_pyspark_type(dtype: Union[np.dtype, str]) -> str:
         return "double"
     elif dtype == np.int32:
         return "int"
+    elif dtype == np.int64:
+        return "long"
     elif dtype == np.int16:
         return "short"
+    elif dtype == np.int64:
+        return "long"
     else:
         raise RuntimeError("Unsupported dtype, found ", dtype)
 
