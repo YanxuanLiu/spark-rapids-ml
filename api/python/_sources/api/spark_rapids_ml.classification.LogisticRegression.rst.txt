@@ -52,7 +52,9 @@ LogisticRegression
        ~LogisticRegression.getParam
        ~LogisticRegression.getPredictionCol
        ~LogisticRegression.getProbabilityCol
+       ~LogisticRegression.getRawPredictionCol
        ~LogisticRegression.getRegParam
+       ~LogisticRegression.getStandardization
        ~LogisticRegression.getTol
        ~LogisticRegression.hasDefault
        ~LogisticRegression.hasParam
@@ -70,6 +72,7 @@ LogisticRegression
        ~LogisticRegression.setMaxIter
        ~LogisticRegression.setPredictionCol
        ~LogisticRegression.setProbabilityCol
+       ~LogisticRegression.setRawPredictionCol
        ~LogisticRegression.setRegParam
        ~LogisticRegression.setTol
        ~LogisticRegression.write
@@ -86,6 +89,7 @@ LogisticRegression
     
        ~LogisticRegression.cuml_params
        ~LogisticRegression.elasticNetParam
+       ~LogisticRegression.enable_sparse_data_optim
        ~LogisticRegression.featuresCol
        ~LogisticRegression.featuresCols
        ~LogisticRegression.fitIntercept
@@ -95,7 +99,9 @@ LogisticRegression
        ~LogisticRegression.params
        ~LogisticRegression.predictionCol
        ~LogisticRegression.probabilityCol
+       ~LogisticRegression.rawPredictionCol
        ~LogisticRegression.regParam
+       ~LogisticRegression.standardization
        ~LogisticRegression.tol
 
     
@@ -124,7 +130,9 @@ LogisticRegression
     .. automethod:: getParam
     .. automethod:: getPredictionCol
     .. automethod:: getProbabilityCol
+    .. automethod:: getRawPredictionCol
     .. automethod:: getRegParam
+    .. automethod:: getStandardization
     .. automethod:: getTol
     .. automethod:: hasDefault
     .. automethod:: hasParam
@@ -142,6 +150,7 @@ LogisticRegression
     .. automethod:: setMaxIter
     .. automethod:: setPredictionCol
     .. automethod:: setProbabilityCol
+    .. automethod:: setRawPredictionCol
     .. automethod:: setRegParam
     .. automethod:: setTol
     .. automethod:: write
@@ -157,6 +166,7 @@ LogisticRegression
     
     .. autoattribute:: cuml_params
     .. autoattribute:: elasticNetParam
+    .. autoattribute:: enable_sparse_data_optim
     .. autoattribute:: featuresCol
     .. autoattribute:: featuresCols
     .. autoattribute:: fitIntercept
@@ -166,7 +176,9 @@ LogisticRegression
     .. autoattribute:: params
     .. autoattribute:: predictionCol
     .. autoattribute:: probabilityCol
+    .. autoattribute:: rawPredictionCol
     .. autoattribute:: regParam
+    .. autoattribute:: standardization
     .. autoattribute:: tol
 
     

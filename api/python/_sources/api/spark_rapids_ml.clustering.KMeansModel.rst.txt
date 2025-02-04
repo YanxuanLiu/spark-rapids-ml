@@ -46,13 +46,11 @@ KMeansModel
        ~KMeansModel.getFeaturesCols
        ~KMeansModel.getInitMode
        ~KMeansModel.getK
-       ~KMeansModel.getMaxBlockSizeInMB
        ~KMeansModel.getMaxIter
        ~KMeansModel.getOrDefault
        ~KMeansModel.getParam
        ~KMeansModel.getPredictionCol
        ~KMeansModel.getSeed
-       ~KMeansModel.getSolver
        ~KMeansModel.getTol
        ~KMeansModel.hasDefault
        ~KMeansModel.hasParam
@@ -85,14 +83,12 @@ KMeansModel
        ~KMeansModel.hasSummary
        ~KMeansModel.initMode
        ~KMeansModel.k
-       ~KMeansModel.maxBlockSizeInMB
        ~KMeansModel.maxIter
        ~KMeansModel.numFeatures
        ~KMeansModel.num_workers
        ~KMeansModel.params
        ~KMeansModel.predictionCol
        ~KMeansModel.seed
-       ~KMeansModel.solver
        ~KMeansModel.tol
 
     
@@ -115,13 +111,11 @@ KMeansModel
     .. automethod:: getFeaturesCols
     .. automethod:: getInitMode
     .. automethod:: getK
-    .. automethod:: getMaxBlockSizeInMB
     .. automethod:: getMaxIter
     .. automethod:: getOrDefault
     .. automethod:: getParam
     .. automethod:: getPredictionCol
     .. automethod:: getSeed
-    .. automethod:: getSolver
     .. automethod:: getTol
     .. automethod:: hasDefault
     .. automethod:: hasParam
@@ -153,14 +147,12 @@ KMeansModel
     .. autoattribute:: hasSummary
     .. autoattribute:: initMode
     .. autoattribute:: k
-    .. autoattribute:: maxBlockSizeInMB
     .. autoattribute:: maxIter
     .. autoattribute:: numFeatures
     .. autoattribute:: num_workers
     .. autoattribute:: params
     .. autoattribute:: predictionCol
     .. autoattribute:: seed
-    .. autoattribute:: solver
     .. autoattribute:: tol
 
     

@@ -52,7 +52,9 @@ LogisticRegressionModel
        ~LogisticRegressionModel.getParam
        ~LogisticRegressionModel.getPredictionCol
        ~LogisticRegressionModel.getProbabilityCol
+       ~LogisticRegressionModel.getRawPredictionCol
        ~LogisticRegressionModel.getRegParam
+       ~LogisticRegressionModel.getStandardization
        ~LogisticRegressionModel.getTol
        ~LogisticRegressionModel.hasDefault
        ~LogisticRegressionModel.hasParam
@@ -70,6 +72,7 @@ LogisticRegressionModel
        ~LogisticRegressionModel.setLabelCol
        ~LogisticRegressionModel.setPredictionCol
        ~LogisticRegressionModel.setProbabilityCol
+       ~LogisticRegressionModel.setRawPredictionCol
        ~LogisticRegressionModel.transform
        ~LogisticRegressionModel.write
 
@@ -87,6 +90,7 @@ LogisticRegressionModel
        ~LogisticRegressionModel.coefficients
        ~LogisticRegressionModel.cuml_params
        ~LogisticRegressionModel.elasticNetParam
+       ~LogisticRegressionModel.enable_sparse_data_optim
        ~LogisticRegressionModel.featuresCol
        ~LogisticRegressionModel.featuresCols
        ~LogisticRegressionModel.fitIntercept
@@ -101,7 +105,9 @@ LogisticRegressionModel
        ~LogisticRegressionModel.params
        ~LogisticRegressionModel.predictionCol
        ~LogisticRegressionModel.probabilityCol
+       ~LogisticRegressionModel.rawPredictionCol
        ~LogisticRegressionModel.regParam
+       ~LogisticRegressionModel.standardization
        ~LogisticRegressionModel.summary
        ~LogisticRegressionModel.tol
 
@@ -131,7 +137,9 @@ LogisticRegressionModel
     .. automethod:: getParam
     .. automethod:: getPredictionCol
     .. automethod:: getProbabilityCol
+    .. automethod:: getRawPredictionCol
     .. automethod:: getRegParam
+    .. automethod:: getStandardization
     .. automethod:: getTol
     .. automethod:: hasDefault
     .. automethod:: hasParam
@@ -149,6 +157,7 @@ LogisticRegressionModel
     .. automethod:: setLabelCol
     .. automethod:: setPredictionCol
     .. automethod:: setProbabilityCol
+    .. automethod:: setRawPredictionCol
     .. automethod:: transform
     .. automethod:: write
 
@@ -165,6 +174,7 @@ LogisticRegressionModel
     .. autoattribute:: coefficients
     .. autoattribute:: cuml_params
     .. autoattribute:: elasticNetParam
+    .. autoattribute:: enable_sparse_data_optim
     .. autoattribute:: featuresCol
     .. autoattribute:: featuresCols
     .. autoattribute:: fitIntercept
@@ -179,7 +189,9 @@ LogisticRegressionModel
     .. autoattribute:: params
     .. autoattribute:: predictionCol
     .. autoattribute:: probabilityCol
+    .. autoattribute:: rawPredictionCol
     .. autoattribute:: regParam
+    .. autoattribute:: standardization
     .. autoattribute:: summary
     .. autoattribute:: tol
 
