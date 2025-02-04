@@ -44,6 +44,8 @@ UMAP
        ~UMAP.fitMultiple
        ~UMAP.getA
        ~UMAP.getB
+       ~UMAP.getBuildAlgo
+       ~UMAP.getBuildKwds
        ~UMAP.getFeaturesCol
        ~UMAP.getFeaturesCols
        ~UMAP.getInit
@@ -51,6 +53,7 @@ UMAP
        ~UMAP.getLearningRate
        ~UMAP.getLocalConnectivity
        ~UMAP.getMetric
+       ~UMAP.getMetricKwds
        ~UMAP.getMinDist
        ~UMAP.getNComponents
        ~UMAP.getNEpochs
@@ -59,7 +62,6 @@ UMAP
        ~UMAP.getOrDefault
        ~UMAP.getOutputCol
        ~UMAP.getParam
-       ~UMAP.getPrecomputedKNN
        ~UMAP.getRandomState
        ~UMAP.getRepulsionStrength
        ~UMAP.getSampleFraction
@@ -76,6 +78,8 @@ UMAP
        ~UMAP.set
        ~UMAP.setA
        ~UMAP.setB
+       ~UMAP.setBuildAlgo
+       ~UMAP.setBuildKwds
        ~UMAP.setFeaturesCol
        ~UMAP.setFeaturesCols
        ~UMAP.setInit
@@ -83,13 +87,13 @@ UMAP
        ~UMAP.setLearningRate
        ~UMAP.setLocalConnectivity
        ~UMAP.setMetric
+       ~UMAP.setMetricKwds
        ~UMAP.setMinDist
        ~UMAP.setNComponents
        ~UMAP.setNEpochs
        ~UMAP.setNNeighbors
        ~UMAP.setNegativeSampleRate
        ~UMAP.setOutputCol
-       ~UMAP.setPrecomputedKNN
        ~UMAP.setRandomState
        ~UMAP.setRepulsionStrength
        ~UMAP.setSampleFraction
@@ -110,7 +114,10 @@ UMAP
     
        ~UMAP.a
        ~UMAP.b
+       ~UMAP.build_algo
+       ~UMAP.build_kwds
        ~UMAP.cuml_params
+       ~UMAP.enable_sparse_data_optim
        ~UMAP.featuresCol
        ~UMAP.featuresCols
        ~UMAP.init
@@ -118,6 +125,7 @@ UMAP
        ~UMAP.learning_rate
        ~UMAP.local_connectivity
        ~UMAP.metric
+       ~UMAP.metric_kwds
        ~UMAP.min_dist
        ~UMAP.n_components
        ~UMAP.n_epochs
@@ -126,13 +134,13 @@ UMAP
        ~UMAP.num_workers
        ~UMAP.outputCol
        ~UMAP.params
-       ~UMAP.precomputed_knn
        ~UMAP.random_state
        ~UMAP.repulsion_strength
        ~UMAP.sample_fraction
        ~UMAP.set_op_mix_ratio
        ~UMAP.spread
        ~UMAP.transform_queue_size
+       ~UMAP.verbose
 
     
     
@@ -152,6 +160,8 @@ UMAP
     .. automethod:: fitMultiple
     .. automethod:: getA
     .. automethod:: getB
+    .. automethod:: getBuildAlgo
+    .. automethod:: getBuildKwds
     .. automethod:: getFeaturesCol
     .. automethod:: getFeaturesCols
     .. automethod:: getInit
@@ -159,6 +169,7 @@ UMAP
     .. automethod:: getLearningRate
     .. automethod:: getLocalConnectivity
     .. automethod:: getMetric
+    .. automethod:: getMetricKwds
     .. automethod:: getMinDist
     .. automethod:: getNComponents
     .. automethod:: getNEpochs
@@ -167,7 +178,6 @@ UMAP
     .. automethod:: getOrDefault
     .. automethod:: getOutputCol
     .. automethod:: getParam
-    .. automethod:: getPrecomputedKNN
     .. automethod:: getRandomState
     .. automethod:: getRepulsionStrength
     .. automethod:: getSampleFraction
@@ -184,6 +194,8 @@ UMAP
     .. automethod:: set
     .. automethod:: setA
     .. automethod:: setB
+    .. automethod:: setBuildAlgo
+    .. automethod:: setBuildKwds
     .. automethod:: setFeaturesCol
     .. automethod:: setFeaturesCols
     .. automethod:: setInit
@@ -191,13 +203,13 @@ UMAP
     .. automethod:: setLearningRate
     .. automethod:: setLocalConnectivity
     .. automethod:: setMetric
+    .. automethod:: setMetricKwds
     .. automethod:: setMinDist
     .. automethod:: setNComponents
     .. automethod:: setNEpochs
     .. automethod:: setNNeighbors
     .. automethod:: setNegativeSampleRate
     .. automethod:: setOutputCol
-    .. automethod:: setPrecomputedKNN
     .. automethod:: setRandomState
     .. automethod:: setRepulsionStrength
     .. automethod:: setSampleFraction
@@ -217,7 +229,10 @@ UMAP
     
     .. autoattribute:: a
     .. autoattribute:: b
+    .. autoattribute:: build_algo
+    .. autoattribute:: build_kwds
     .. autoattribute:: cuml_params
+    .. autoattribute:: enable_sparse_data_optim
     .. autoattribute:: featuresCol
     .. autoattribute:: featuresCols
     .. autoattribute:: init
@@ -225,6 +240,7 @@ UMAP
     .. autoattribute:: learning_rate
     .. autoattribute:: local_connectivity
     .. autoattribute:: metric
+    .. autoattribute:: metric_kwds
     .. autoattribute:: min_dist
     .. autoattribute:: n_components
     .. autoattribute:: n_epochs
@@ -233,13 +249,13 @@ UMAP
     .. autoattribute:: num_workers
     .. autoattribute:: outputCol
     .. autoattribute:: params
-    .. autoattribute:: precomputed_knn
     .. autoattribute:: random_state
     .. autoattribute:: repulsion_strength
     .. autoattribute:: sample_fraction
     .. autoattribute:: set_op_mix_ratio
     .. autoattribute:: spread
     .. autoattribute:: transform_queue_size
+    .. autoattribute:: verbose
 
     
     

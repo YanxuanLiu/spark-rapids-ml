@@ -73,7 +73,6 @@ DBSCANModel
     .. autosummary::
     
        ~DBSCANModel.algorithm
-       ~DBSCANModel.calc_core_sample_indices
        ~DBSCANModel.cuml_params
        ~DBSCANModel.eps
        ~DBSCANModel.featuresCol
@@ -86,6 +85,7 @@ DBSCANModel
        ~DBSCANModel.num_workers
        ~DBSCANModel.params
        ~DBSCANModel.predictionCol
+       ~DBSCANModel.verbose
 
     
     
@@ -133,7 +133,6 @@ DBSCANModel
 
     
     .. autoattribute:: algorithm
-    .. autoattribute:: calc_core_sample_indices
     .. autoattribute:: cuml_params
     .. autoattribute:: eps
     .. autoattribute:: featuresCol
@@ -146,6 +145,7 @@ DBSCANModel
     .. autoattribute:: num_workers
     .. autoattribute:: params
     .. autoattribute:: predictionCol
+    .. autoattribute:: verbose
 
     
     
